@@ -1,0 +1,55 @@
+{
+  "name": "unique-av-show-cue",
+  "productName": "Unique AV Show Cue",
+  "version": "1.0.0",
+  "description": "Theatre and live show cue playback: audio, video and image cues with a GO playlist, MIDI and OSC control.",
+  "main": "src/main.js",
+  "author": "Unique AV",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --x64 --publish never",
+    "dist:mac": "electron-builder --mac --publish never"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "za.co.uniqueav.showcue",
+    "productName": "Unique AV Show Cue",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "fileAssociations": [
+      {
+        "ext": "showcue",
+        "name": "Show Cue File",
+        "description": "Unique AV Show Cue show",
+        "role": "Editor"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Unique AV Show Cue"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.music"
+    }
+  }
+}

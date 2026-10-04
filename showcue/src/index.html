@@ -1,0 +1,122 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Unique AV Show Cue</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' media:; img-src 'self' media: data:; media-src 'self' media:; script-src 'self'; style-src 'self' 'unsafe-inline'">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <button id="goBtn" class="go" title="GO (Space / Enter)">GO</button>
+    <div class="standby">
+      <div class="standby-label">STANDBY</div>
+      <div class="standby-cue"><span id="standbyNum"></span><span id="standbyName">—</span></div>
+      <div id="standbyNotes" class="standby-notes"></div>
+    </div>
+    <div class="transport">
+      <button id="prevBtn" class="tbtn" title="Standby previous cue (↑)">▲ Prev</button>
+      <button id="nextBtn" class="tbtn" title="Standby next cue (↓)">▼ Next</button>
+      <button id="pauseBtn" class="tbtn" title="Pause / resume all (P)">❚❚ Pause</button>
+      <button id="stopBtn" class="tbtn stop" title="Stop all with fade (Esc)">■ Stop All</button>
+      <button id="panicBtn" class="tbtn panic" title="Stop everything now (Shift+Esc)">Panic</button>
+    </div>
+    <div class="master">
+      <label for="masterVol">MASTER</label>
+      <input id="masterVol" type="range" min="0" max="100" step="1" value="100">
+      <span id="masterVal">100</span>
+    </div>
+    <div class="status">
+      <button id="outBtn" class="pill" title="Open / close the video output window"><i></i>Output</button>
+      <span id="midiPill" class="pill" title="MIDI input"><i></i>MIDI</span>
+      <span id="oscPill" class="pill" title="OSC input"><i></i>OSC</span>
+      <button id="lockBtn" class="pill" title="Lock show (Ctrl+L)"><i></i>Edit</button>
+      <button id="settingsBtn" class="pill icon" title="Settings (Ctrl+,)">⚙</button>
+      <div id="clock" class="clock">00:00:00</div>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <input id="showName" class="show-name" spellcheck="false" title="Show name">
+    <div class="sep"></div>
+    <span class="tlabel">Add</span>
+    <button class="add" data-type="audio">Audio</button>
+    <button class="add" data-type="video">Video</button>
+    <button class="add" data-type="image">Image</button>
+    <button class="add" data-type="stop">Stop</button>
+    <button class="add" data-type="black">Black</button>
+    <button class="add" data-type="osc">OSC</button>
+    <button class="add" data-type="midi">MIDI</button>
+    <div class="sep"></div>
+    <button id="upBtn" class="edit" title="Move cue up">↑</button>
+    <button id="downBtn" class="edit" title="Move cue down">↓</button>
+    <button id="dupBtn" class="edit" title="Duplicate cue (Ctrl+D)">Duplicate</button>
+    <button id="delBtn" class="edit danger" title="Delete cue (Del)">Delete</button>
+    <div class="spacer"></div>
+    <span id="cueCount" class="tlabel"></span>
+  </div>
+
+  <main>
+    <section class="cuelist" id="cuelist">
+      <div class="cue-head">
+        <div>#</div><div>Type</div><div>Name</div><div class="r">Length</div><div class="r">In</div><div class="r">Out</div><div class="r">Vol</div><div>Output</div><div>Follow</div>
+      </div>
+      <div id="cueRows" class="cue-rows"></div>
+      <div id="emptyHint" class="empty-hint">
+        <div class="big">Drop audio, video or image files here</div>
+        <div>or use the Add buttons above. Press <kbd>Space</kbd> to GO.</div>
+      </div>
+      <div id="dropOverlay" class="drop-overlay">Drop to add cues</div>
+    </section>
+    <aside class="inspector" id="inspector"></aside>
+  </main>
+
+  <footer class="active-panel">
+    <div class="active-head"><span>PLAYING</span><span id="activeCount"></span></div>
+    <div id="activeList" class="active-list"></div>
+  </footer>
+
+  <div id="settingsModal" class="modal hidden">
+    <div class="modal-box wide">
+      <div class="modal-head"><h2>Settings</h2><button class="x" data-close>×</button></div>
+      <div class="modal-body" id="settingsBody"></div>
+    </div>
+  </div>
+
+  <div id="helpModal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-head"><h2>Keyboard &amp; OSC reference</h2><button class="x" data-close>×</button></div>
+      <div class="modal-body help">
+        <h3>Keyboard</h3>
+        <table>
+          <tr><td><kbd>Space</kbd> / <kbd>Enter</kbd></td><td>GO – fire the standby cue</td></tr>
+          <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Move standby to previous / next cue</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>Stop all (with the stop-all fade time)</td></tr>
+          <tr><td><kbd>Shift</kbd>+<kbd>Esc</kbd></td><td>Panic – stop everything immediately</td></tr>
+          <tr><td><kbd>P</kbd></td><td>Pause / resume everything</td></tr>
+          <tr><td><kbd>Del</kbd></td><td>Delete selected cue (edit mode)</td></tr>
+          <tr><td><kbd>Ctrl</kbd>+<kbd>L</kbd></td><td>Lock / unlock the show</td></tr>
+        </table>
+        <h3>OSC (UDP, default port 53000)</h3>
+        <table>
+          <tr><td><code>/showcue/go</code></td><td>GO. With a number argument: standby that cue and GO</td></tr>
+          <tr><td><code>/showcue/cue &lt;n&gt;</code></td><td>Fire cue n without moving standby</td></tr>
+          <tr><td><code>/showcue/setgo &lt;n&gt;</code></td><td>Set standby to cue n</td></tr>
+          <tr><td><code>/showcue/next</code> · <code>/showcue/prev</code></td><td>Move standby</td></tr>
+          <tr><td><code>/showcue/stopall</code> · <code>/showcue/panic</code></td><td>Stop all with fade / immediately</td></tr>
+          <tr><td><code>/showcue/pauseall</code> · <code>/showcue/resumeall</code></td><td>Pause / resume</td></tr>
+          <tr><td><code>/showcue/master &lt;0-100&gt;</code></td><td>Master volume</td></tr>
+        </table>
+        <p class="muted">MiX16-style addresses (<code>/mix16showcue/go</code> etc.) are accepted too. Cue numbers match the # column; if none matches, the number is used as a position in the list.</p>
+        <h3>Feedback</h3>
+        <p class="muted">When a feedback host is set, the app sends <code>/showcue/standby &lt;number&gt; &lt;name&gt;</code> every time the standby cue changes.</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="toasts" class="toasts"></div>
+
+  <script src="audio-router.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
