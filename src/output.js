@@ -92,12 +92,19 @@
     }
   }
 
+  function restartFade(L) {
+    if (!L.endFading || !L.audio) return;
+    L.endFading = false;
+    window.AudioRouter.ramp(L.audio.fade.gain, L.audio.ctx, 1, Math.max(0.05, L.cfg.fadeIn || 0));
+  }
+
   function onEnd(L) {
     if (!layers.has(L.id) || L.stopping) return;
     const c = L.cfg;
     if (c.loop) {
       L.video.currentTime = c.startAt || 0;
       L.video.play().catch(() => {});
+      restartFade(L);
       return;
     }
     emit({ evt: 'ended', id: L.id });
@@ -110,8 +117,13 @@
     for (const L of layers.values()) {
       if (L.video) {
         const v = L.video;
+        const endT = L.cfg.endAt > 0 ? L.cfg.endAt : v.duration;
+        if (L.cfg.fadeAtEnd && L.fadeOut > 0 && L.audio && !L.stopping && !L.endFading && !v.paused && isFinite(endT) && endT - v.currentTime <= L.fadeOut) {
+          L.endFading = true;
+          window.AudioRouter.ramp(L.audio.fade.gain, L.audio.ctx, 0, Math.max(0.05, endT - v.currentTime));
+        }
         if (L.cfg.endAt > 0 && v.currentTime >= L.cfg.endAt && !L.stopping) {
-          if (L.cfg.loop) { v.currentTime = L.cfg.startAt || 0; }
+          if (L.cfg.loop) { v.currentTime = L.cfg.startAt || 0; restartFade(L); }
           else { v.pause(); onEnd(L); }
         }
         emit({ evt: 'progress', id: L.id, t: v.currentTime, dur: L.cfg.endAt > 0 ? L.cfg.endAt : v.duration, paused: v.paused });

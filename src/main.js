@@ -5,6 +5,7 @@ const fs = require('fs');
 const dgram = require('dgram');
 const { Readable } = require('stream');
 const osc = require('./osc');
+const { createUpdater } = require('./updater');
 
 const APP_NAME = 'Unique AV Show Cue';
 
@@ -70,6 +71,7 @@ let outReady = false;
 let outQueue = [];
 let isDirty = false;
 let pendingOpenPath = null;
+const updater = createUpdater((st) => sendToMain('update-status', st));
 
 function webPrefs() {
   return {
@@ -317,6 +319,11 @@ ipcMain.on('output-open', (_e, displayId) => {
 ipcMain.on('output-close', () => { if (outWin) outWin.destroy(); });
 ipcMain.on('output-event', (_e, evt) => sendToMain('output-event', evt));
 
+ipcMain.handle('get-version', () => app.getVersion());
+ipcMain.handle('update-check', () => { updater.check(); return updater.getState(); });
+ipcMain.handle('update-install', () => updater.install());
+ipcMain.on('update-config', (_e, cfg) => updater.configure(cfg || {}));
+
 ipcMain.on('set-dirty', (_e, v) => { isDirty = !!v; if (mainWin) mainWin.setDocumentEdited(isDirty); });
 ipcMain.on('set-title', (_e, t) => { if (mainWin) mainWin.setTitle(t); });
 ipcMain.on('quit-now', () => { isDirty = false; if (mainWin) mainWin.close(); });
@@ -326,7 +333,21 @@ ipcMain.on('quit-now', () => { isDirty = false; if (mainWin) mainWin.close(); })
 // ---------------------------------------------------------------------------
 function buildMenu() {
   const send = (cmd) => () => sendToMain('menu', cmd);
+  const isMac = process.platform === 'darwin';
   const template = [
+    ...(isMac ? [{
+      label: APP_NAME,
+      submenu: [
+        { role: 'about' },
+        { label: 'Check for Updates…', click: send('check-updates') },
+        { type: 'separator' },
+        { label: 'Settings…', accelerator: 'Cmd+,', click: send('settings') },
+        { type: 'separator' },
+        { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' }
+      ]
+    }] : []),
     {
       label: 'File',
       submenu: [
@@ -337,8 +358,7 @@ function buildMenu() {
         { label: 'Save As…', accelerator: 'CmdOrCtrl+Shift+S', click: send('save-as') },
         { type: 'separator' },
         { label: 'Add Media…', accelerator: 'CmdOrCtrl+I', click: send('add-media') },
-        { type: 'separator' },
-        { role: 'quit', label: 'Exit' }
+        ...(isMac ? [] : [{ type: 'separator' }, { role: 'quit', label: 'Exit' }])
       ]
     },
     {
@@ -367,8 +387,7 @@ function buildMenu() {
         { label: 'Open Output Window', accelerator: 'CmdOrCtrl+Shift+O', click: send('output-open') },
         { label: 'Close Output Window', click: send('output-close') },
         { type: 'separator' },
-        { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: send('settings') },
-        { type: 'separator' },
+        ...(isMac ? [] : [{ label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: send('settings') }, { type: 'separator' }]),
         { role: 'togglefullscreen' },
         { role: 'toggleDevTools' }
       ]
@@ -377,6 +396,7 @@ function buildMenu() {
       label: 'Help',
       submenu: [
         { label: 'Keyboard & OSC Reference', click: send('help') },
+        { label: 'Check for Updates…', click: send('check-updates') },
         { label: `About ${APP_NAME}`, click: () => dialog.showMessageBox(mainWin, { title: APP_NAME, message: APP_NAME, detail: `Version ${app.getVersion()}\nUnique AV` }) }
       ]
     }

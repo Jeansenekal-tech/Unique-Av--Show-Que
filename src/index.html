@@ -31,6 +31,7 @@
       <span id="midiPill" class="pill" title="MIDI input"><i></i>MIDI</span>
       <span id="oscPill" class="pill" title="OSC input"><i></i>OSC</span>
       <button id="lockBtn" class="pill" title="Lock show (Ctrl+L)"><i></i>Edit</button>
+      <button id="updPill" class="pill update hidden" title="A new version is available"><i></i><span>Update</span></button>
       <button id="settingsBtn" class="pill icon" title="Settings (Ctrl+,)">⚙</button>
       <div id="clock" class="clock">00:00:00</div>
     </div>
@@ -71,6 +72,35 @@
     <aside class="inspector" id="inspector"></aside>
   </main>
 
+  <section id="wavePanel" class="wave-panel hidden">
+    <div class="wave-bar">
+      <div class="wave-title" id="waveTitle"></div>
+      <div class="wave-group">
+        <label class="in">IN <input id="waveIn" type="text" spellcheck="false" title="Start point (m:ss.s) – or drag the green marker"></label>
+        <label class="out">OUT <input id="waveOut" type="text" spellcheck="false" title="End point (m:ss.s) – or drag the red marker"></label>
+        <span class="wave-len" title="Length of the cut / whole file">Cut <b id="waveLen">–</b> <span class="muted">of <span id="waveFull">–</span></span></span>
+      </div>
+      <div class="wave-group">
+        <button data-w="setIn" class="edit-only" title="Set IN at the cursor (I)">Set In</button>
+        <button data-w="setOut" class="edit-only" title="Set OUT at the cursor (O)">Set Out</button>
+        <button data-w="reset" class="edit-only" title="Play the whole file again">Reset</button>
+      </div>
+      <div class="wave-group">
+        <button data-w="preview" id="wavePrev" class="pv" title="Preview from the cursor to OUT (double-click the waveform too). Plays on the default output.">▶ Preview</button>
+        <button data-w="checkIn" title="Hear the first 5 seconds of the cut">Hear start</button>
+        <button data-w="checkOut" title="Hear the last 5 seconds of the cut">Hear end</button>
+      </div>
+      <label class="wave-check edit-only" title="Fade out automatically before the OUT point, using the cue's fade-out time"><input type="checkbox" id="waveFadeEnd"> Fade at Out</label>
+      <div class="wave-group zoom">
+        <button data-w="zout" title="Zoom out (-)">−</button>
+        <button data-w="zin" title="Zoom in (+ or mouse wheel)">+</button>
+        <button data-w="fitCut" title="Zoom to the cut">Cut</button>
+        <button data-w="fit" title="Show the whole file">All</button>
+      </div>
+    </div>
+    <canvas id="waveCanvas" tabindex="0"></canvas>
+  </section>
+
   <footer class="active-panel">
     <div class="active-head"><span>PLAYING</span><span id="activeCount"></span></div>
     <div id="activeList" class="active-list"></div>
@@ -97,6 +127,16 @@
           <tr><td><kbd>Del</kbd></td><td>Delete selected cue (edit mode)</td></tr>
           <tr><td><kbd>Ctrl</kbd>+<kbd>L</kbd></td><td>Lock / unlock the show</td></tr>
         </table>
+        <h3>Waveform (click it first)</h3>
+        <table>
+          <tr><td>Drag green / red marker</td><td>Move the IN / OUT point</td></tr>
+          <tr><td>Drag the orange squares</td><td>Change fade-in / fade-out length</td></tr>
+          <tr><td>Click</td><td>Place the cursor · double-click previews from there</td></tr>
+          <tr><td><kbd>I</kbd> / <kbd>O</kbd></td><td>Set IN / OUT at the cursor</td></tr>
+          <tr><td><kbd>←</kbd> <kbd>→</kbd> (Shift = 1 s)</td><td>Nudge the cursor 0.1 s</td></tr>
+          <tr><td>Mouse wheel · Shift+wheel</td><td>Zoom · scroll</td></tr>
+        </table>
+        <p class="muted">Cutting never changes your audio file – it only sets where the cue starts and stops.</p>
         <h3>OSC (UDP, default port 53000)</h3>
         <table>
           <tr><td><code>/showcue/go</code></td><td>GO. With a number argument: standby that cue and GO</td></tr>
@@ -117,6 +157,7 @@
   <div id="toasts" class="toasts"></div>
 
   <script src="audio-router.js"></script>
+  <script src="waveform.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

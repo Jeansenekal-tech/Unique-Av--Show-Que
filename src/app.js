@@ -47,6 +47,10 @@
   const ccLast = {};
   let oscStatus = { ok: false };
   let settings = loadSettings();
+  let wave = null;
+  let upd = { state: 'idle' };
+  let appVersion = '';
+  let announcedReady = null;
 
   function newShow() {
     return { app: 'Unique AV Show Cue', version: 1, name: 'Untitled Show', masterVolume: 100, cues: [] };
@@ -57,7 +61,7 @@
     const def = {
       outputDisplay: null, defaultDevice: '', stopFade: 2, goProtect: 300,
       oscEnabled: true, oscPort: 53000, fbHost: '', fbPort: 53001,
-      midiInput: 'all', midiMap: []
+      midiInput: 'all', midiMap: [], autoUpdate: true
     };
     try { return Object.assign(def, JSON.parse(localStorage.getItem('showcue.settings') || '{}')); } catch (e) { return def; }
   }
@@ -66,8 +70,8 @@
   function defaultsFor(type) {
     const base = { id: uid(), number: '', name: '', type, notes: '', color: '', follow: 'off', followDelay: 0 };
     switch (type) {
-      case 'audio': return { ...base, file: '', volume: 100, fadeIn: 0, fadeOut: 2, startAt: 0, endAt: 0, loop: false, device: settings.defaultDevice || '', route: '1-2', duration: 0 };
-      case 'video': return { ...base, file: '', volume: 100, fadeIn: 0, fadeOut: 1, startAt: 0, endAt: 0, loop: false, device: settings.defaultDevice || '', route: '1-2', fit: 'contain', replace: true, holdLast: false, duration: 0 };
+      case 'audio': return { ...base, file: '', volume: 100, fadeIn: 0, fadeOut: 2, startAt: 0, endAt: 0, loop: false, fadeAtEnd: false, device: settings.defaultDevice || '', route: '1-2', duration: 0 };
+      case 'video': return { ...base, file: '', volume: 100, fadeIn: 0, fadeOut: 1, startAt: 0, endAt: 0, loop: false, fadeAtEnd: false, device: settings.defaultDevice || '', route: '1-2', fit: 'contain', replace: true, holdLast: false, duration: 0 };
       case 'image': return { ...base, file: '', fadeIn: 1, fadeOut: 1, hold: 0, fit: 'contain', replace: true };
       case 'stop': return { ...base, name: 'Stop all', target: 'all', fade: 2 };
       case 'black': return { ...base, name: 'Black screen', fade: 1 };
@@ -261,6 +265,10 @@
   }
 
   function renderInspector() {
+    renderInspectorInner();
+    if (wave) wave.show(cueById(selectedId));
+  }
+  function renderInspectorInner() {
     const box = $('#inspector');
     const c = cueById(selectedId);
     if (!c) {
@@ -286,6 +294,7 @@
         h += fieldHTML('Start at (s)', num('startAt', c.startAt));
         h += fieldHTML('End at (s)', num('endAt', c.endAt), `0 = play to the end${c.duration ? ` (file is ${fmtTenths(c.duration)})` : ''}`);
         h += fieldHTML('', chk('loop', c.loop, 'Loop'));
+        h += fieldHTML('', chk('fadeAtEnd', c.fadeAtEnd, 'Fade out at end point'), 'Uses the fade-out time before End at / end of file');
       } else {
         h += fieldHTML('Hold (s)', num('hold', c.hold, 0.5), '0 = stay on screen until stopped');
       }
@@ -376,6 +385,7 @@
     }
     markDirty();
     refreshRow(c);
+    if (wave) wave.refresh();
     if (e.type === 'change' && ['follow', 'msg', 'device', 'type'].includes(key)) renderInspector();
     if (key === 'number' || key === 'name' || key === 'notes') renderStandby();
   }
@@ -628,9 +638,16 @@
     if (inst.cue.loop) {
       inst.el.currentTime = inst.cue.startAt || 0;
       inst.el.play().catch(() => {});
+      restartFade(inst);
       return;
     }
     finishInst(inst);
+  }
+
+  function restartFade(inst) {
+    if (!inst.endFading || !inst.audio) return;
+    inst.endFading = false;
+    AR.ramp(inst.audio.fade.gain, inst.audio.ctx, 1, Math.max(0.05, inst.cue.fadeIn || 0));
   }
 
   function finishInst(inst) {
@@ -660,7 +677,7 @@
       cmd: {
         cmd: 'play', id: inst.id, cueId: c.id, type: c.type, url: api.mediaURL(p),
         volume: c.volume == null ? 100 : c.volume, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0,
-        loop: !!c.loop, startAt: c.startAt || 0, endAt: c.endAt || 0, device: c.device || '', route: c.route || '1-2',
+        loop: !!c.loop, fadeAtEnd: !!c.fadeAtEnd, startAt: c.startAt || 0, endAt: c.endAt || 0, device: c.device || '', route: c.route || '1-2',
         fit: c.fit || 'contain', hold: c.hold || 0, replace: c.replace !== false, holdLast: !!c.holdLast
       }
     });
@@ -744,8 +761,13 @@
     for (const inst of active.values()) {
       if (inst.kind !== 'audio' || !inst.audio) continue;
       const c = inst.cue, el = inst.el;
+      const endT = c.endAt > 0 ? c.endAt : el.duration;
+      if (c.fadeAtEnd && c.fadeOut > 0 && inst.state === 'playing' && !inst.endFading && isFinite(endT) && endT - el.currentTime <= c.fadeOut) {
+        inst.endFading = true;
+        AR.ramp(inst.audio.fade.gain, inst.audio.ctx, 0, Math.max(0.05, endT - el.currentTime));
+      }
       if (c.endAt > 0 && el.currentTime >= c.endAt && inst.state === 'playing') {
-        if (c.loop) el.currentTime = c.startAt || 0;
+        if (c.loop) { el.currentTime = c.startAt || 0; restartFade(inst); }
         else { el.pause(); finishInst(inst); continue; }
       }
       inst.t = el.currentTime - (c.startAt || 0);
@@ -764,6 +786,7 @@
         break;
       case 'progress':
         if (inst) {
+          inst.rawT = e.t;
           inst.t = e.t - (inst.cue.type === 'video' ? (inst.cue.startAt || 0) : 0);
           inst.paused = e.paused;
           if (inst.state !== 'stopping' && inst.state !== 'loading') inst.state = e.paused ? 'paused' : 'playing';
@@ -1034,7 +1057,9 @@
         <label>Stop All fade (s)</label><input type="number" id="sStopFade" min="0" step="0.5" value="${settings.stopFade}">
         <label>Double-GO protection (ms)</label><input type="number" id="sGoProt" min="0" step="50" value="${settings.goProtect}">
       </div>
-      <p class="muted">For multichannel interfaces, set the interface's speaker configuration in Windows Sound settings (e.g. 7.1) so all its outputs are available, then choose channels per cue.</p>
+      <p class="muted">${api.platform === 'darwin'
+        ? 'For multichannel interfaces, set the interface up in Audio MIDI Setup (Configure Speakers) so all its outputs are available, then choose channels per cue.'
+        : "For multichannel interfaces, set the interface's speaker configuration in Windows Sound settings (e.g. 7.1) so all its outputs are available, then choose channels per cue."}</p>
       <h3>OSC</h3>
       <div class="settings-grid">
         <label>OSC input</label><label class="row" style="color:var(--text)"><input type="checkbox" id="sOscOn" ${settings.oscEnabled ? 'checked' : ''}> Listen for OSC on UDP port <input type="number" id="sOscPort" style="width:90px" min="1" max="65535" value="${settings.oscPort}"></label>
@@ -1059,7 +1084,16 @@
           return c ? `<tr><td>Fire cue ${esc(c.number)} – ${esc(displayName(c))}</td><td class="sig">${esc(sigLabel(m.sig))}</td><td style="text-align:right"><button class="ibtn" data-unlearn-cue="${m.cueId}">Clear</button></td></tr>` : '';
         }).join('')}
       </table>
-      <p class="muted">MIDI mappings are saved on this computer and work with any show. Per-cue triggers are set in the cue's Follow section.</p>`;
+      <p class="muted">MIDI mappings are saved on this computer and work with any show. Per-cue triggers are set in the cue's Follow section.</p>
+      <h3>Updates</h3>
+      <div class="settings-grid">
+        <label>Installed version</label><span>${esc(appVersion || '–')}</span>
+        <label>Automatic updates</label><label class="row" style="color:var(--text)"><input type="checkbox" id="sAutoUpd" ${settings.autoUpdate ? 'checked' : ''}> Check for new versions when the app starts and every few hours</label>
+        <label>Status</label><div class="row"><span id="updStatus" class="upd-status"></span></div>
+        <label></label><div class="row"><button class="ibtn" id="sUpdCheck">Check now</button><button class="ibtn" id="sUpdInstall" style="display:none">Restart &amp; update</button></div>
+      </div>
+      <p class="muted">Updates download in the background and install when you close the app, or straight away with Restart &amp; update. The app never restarts by itself during a show.</p>`;
+    renderUpdate();
   }
 
   $('#settingsBody').addEventListener('change', async (e) => {
@@ -1074,6 +1108,7 @@
       case 'sFbHost': settings.fbHost = t.value.trim(); lastFb = null; sendFeedback(); break;
       case 'sFbPort': settings.fbPort = parseInt(t.value, 10) || 53001; lastFb = null; sendFeedback(); break;
       case 'sMidiIn': settings.midiInput = t.value; bindMidi(); updateMidiPill(); break;
+      case 'sAutoUpd': settings.autoUpdate = t.checked; saveSettings(); api.send('update-config', { auto: t.checked }); break;
     }
     saveSettings();
   });
@@ -1087,6 +1122,8 @@
       setTimeout(() => api.send('output-cmd', { cmd: { cmd: 'identify' } }), outputOpen ? 0 : 900);
       return;
     }
+    if (b.id === 'sUpdCheck') { checkUpdates(); return; }
+    if (b.id === 'sUpdInstall') { installUpdate(); return; }
     if (b.id === 'sUnlock') { await AR.unlockLabels(); renderSettings(); renderInspector(); return; }
     if (b.dataset.learn) {
       midiLearn = midiLearn && midiLearn.action === b.dataset.learn ? null : { action: b.dataset.learn };
@@ -1176,6 +1213,7 @@
     b.innerHTML = `<i></i>${v ? 'Locked' : 'Edit'}`;
     $('#showName').readOnly = v;
     $$('.cue-row').forEach(r => r.setAttribute('draggable', String(!v)));
+    if (wave) wave.refresh();
   }
 
   // ------------------------------------------------------------------ menu / buttons / keys
@@ -1198,6 +1236,7 @@
       case 'output-close': api.send('output-close'); break;
       case 'settings': openModal('#settingsModal'); break;
       case 'help': openModal('#helpModal'); break;
+      case 'check-updates': openModal('#settingsModal'); checkUpdates(); break;
     }
   });
   api.on('toast', (m) => toast(m, 'warn'));
@@ -1213,6 +1252,7 @@
   $('#outBtn').addEventListener('click', blurAfter(() => outputOpen ? api.send('output-close') : api.send('output-open', settings.outputDisplay)));
   $('#lockBtn').addEventListener('click', blurAfter(() => setLocked(!locked)));
   $('#settingsBtn').addEventListener('click', blurAfter(() => openModal('#settingsModal')));
+  $('#updPill').addEventListener('click', blurAfter(() => { if (upd.state === 'ready' || upd.state === 'available') installUpdate(); else openModal('#settingsModal'); }));
   $('#upBtn').addEventListener('click', blurAfter(() => moveSelected(-1)));
   $('#downBtn').addEventListener('click', blurAfter(() => moveSelected(1)));
   $('#dupBtn').addEventListener('click', blurAfter(duplicateSelected));
@@ -1295,6 +1335,7 @@
 
   // keyboard
   document.addEventListener('keydown', (e) => {
+    if (wave && !e.ctrlKey && !e.metaKey && !e.altKey && wave.handleKey(e)) { e.preventDefault(); return; }
     const t = e.target;
     const typing = t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && !['checkbox', 'range', 'button'].includes(t.type)) || t.tagName === 'SELECT');
     if (e.key === 'Escape' && !$$('.modal').every(m => m.classList.contains('hidden'))) { closeModals(); return; }
@@ -1329,11 +1370,112 @@
   if (navigator.mediaDevices) navigator.mediaDevices.addEventListener('devicechange', async () => { await AR.refreshDevices(); renderInspector(); });
 
   // ------------------------------------------------------------------ start
+  // ------------------------------------------------------------------ updates
+  function updText() {
+    switch (upd.state) {
+      case 'checking': return 'Checking for updates…';
+      case 'none': return `You have the latest version (${appVersion})`;
+      case 'downloading': return `Downloading version ${upd.version || ''}… ${upd.percent || 0}%`;
+      case 'ready': return `Version ${upd.version} is ready – installs when you close the app`;
+      case 'available': return `Version ${upd.version} is available – click Download to get the new installer`;
+      case 'error': return `Couldn't check for updates: ${upd.message}`;
+      case 'unavailable': return upd.message;
+      default: return settings.autoUpdate ? 'Waiting to check…' : 'Automatic checks are off';
+    }
+  }
+
+  function renderUpdate() {
+    const pill = $('#updPill');
+    const showPill = upd.state === 'downloading' || upd.state === 'ready' || upd.state === 'available';
+    pill.classList.toggle('hidden', !showPill);
+    pill.classList.toggle('ready', upd.state === 'ready' || upd.state === 'available');
+    pill.querySelector('span').textContent = upd.state === 'ready' ? 'Update ready' : upd.state === 'available' ? `Get ${upd.version}` : `Update ${upd.percent || 0}%`;
+    pill.title = upd.state === 'ready' ? `Version ${upd.version} downloaded – click to restart and install` : `Downloading version ${upd.version || ''}`;
+    const st = $('#updStatus');
+    if (st) { st.textContent = updText(); st.classList.toggle('err', upd.state === 'error'); }
+    const ib = $('#sUpdInstall');
+    if (ib) { ib.style.display = upd.state === 'ready' || upd.state === 'available' ? '' : 'none'; ib.textContent = upd.state === 'available' ? 'Download' : 'Restart & update'; }
+    const cb = $('#sUpdCheck');
+    if (cb) cb.disabled = upd.state === 'checking' || upd.state === 'downloading';
+  }
+
+  function checkUpdates() {
+    upd = { ...upd, state: upd.state === 'ready' ? 'ready' : 'checking' };
+    renderUpdate();
+    api.invoke('update-check').catch(() => {});
+  }
+
+  async function installUpdate() {
+    if (upd.state === 'available') { api.invoke('update-install'); return; }
+    if (upd.state !== 'ready') return;
+    const playing = [...active.values()].some(i => i.state !== 'stopping');
+    const msg = playing ? 'Cues are playing. Restart now to install the update? Playback will stop.' : `Restart now to install version ${upd.version}?`;
+    const r = await api.invoke('confirm', { message: msg, detail: 'The app reopens by itself after updating (about 10–20 seconds).', buttons: ['Restart & update', 'Later'] });
+    if (r !== 0) return;
+    if (dirty) {
+      const s = await api.invoke('confirm', { message: 'Save changes to this show first?', buttons: ['Save', "Don't Save", 'Cancel'] });
+      if (s === 2) return;
+      if (s === 0 && !(await save(false))) return;
+      if (s === 1) { dirty = false; api.send('set-dirty', false); }
+    }
+    stopAll(0, true);
+    await api.invoke('update-install');
+  }
+
+  api.on('update-status', (st) => {
+    upd = st || { state: 'idle' };
+    renderUpdate();
+    if (upd.state === 'ready' && announcedReady !== upd.version) {
+      announcedReady = upd.version;
+      toast(`Update ${upd.version} downloaded – it installs when you close the app. Click “Update ready” to install now.`);
+    }
+    if (upd.state === 'available' && announcedReady !== upd.version) {
+      announcedReady = upd.version;
+      toast(`Version ${upd.version} is available. Click “Get ${upd.version}” to download it.`);
+    }
+    if (upd.manual && upd.state === 'none') toast(`You have the latest version (${appVersion})`);
+    if (upd.manual && (upd.state === 'error' || upd.state === 'unavailable')) toast(updText(), 'warn');
+  });
+
+  function initWave() {
+    if (!window.WaveEditor) return;
+    wave = window.WaveEditor.init({
+      api, toast,
+      isLocked: () => locked,
+      isMissing: (c) => missing.has(c.id),
+      getVolume: (c) => ((c.volume == null ? 100 : c.volume) / 100) * master(),
+      getPlayhead: (cueId) => {
+        let pos = null;
+        for (const inst of active.values()) {
+          if (inst.cue.id !== cueId || inst.state === 'stopping' || inst.state === 'loading') continue;
+          pos = inst.kind === 'audio' ? inst.el.currentTime : (inst.rawT != null ? inst.rawT : null);
+        }
+        return pos;
+      },
+      onChange: (c, patch, final) => {
+        const onlyDuration = Object.keys(patch).length === 1 && 'duration' in patch;
+        Object.assign(c, patch);
+        if (!onlyDuration && Object.keys(patch).length) markDirty();
+        refreshRow(c);
+        if (c.id !== selectedId) return;
+        for (const k of Object.keys(patch)) {
+          const el = $(`#inspector [data-key="${k}"]`);
+          if (!el) continue;
+          if (el.type === 'checkbox') el.checked = !!patch[k]; else el.value = patch[k];
+        }
+        if (final && 'endAt' in patch) renderInspectorInner();
+      }
+    });
+  }
+
   (async function init() {
+    initWave();
     $('#showName').value = show.name;
     await AR.refreshDevices();
     renderList(); renderInspector(); renderActive(); updateTitle();
     initMidi();
     applyOsc();
+    try { appVersion = await api.invoke('get-version'); } catch (e) {}
+    api.send('update-config', { auto: settings.autoUpdate });
   })();
 })();

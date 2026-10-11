@@ -1,0 +1,88 @@
+name: Build installers
+
+# Every push to main builds the Windows installer and the Mac DMGs.
+# If the version in package.json has not been released yet, they are also
+# published together as a GitHub Release – installed apps pick it up as an update.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "publish=never" >> "$GITHUB_OUTPUT"
+            echo "Version $VERSION is already released – building without publishing. Raise the version in package.json to publish an update."
+          else
+            echo "publish=always" >> "$GITHUB_OUTPUT"
+            echo "Publishing version $VERSION."
+            # Create the draft once, so the Windows and Mac builds both upload into it.
+            gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
+              --title "Unique AV Show Cue $VERSION" --notes "Windows: download the Setup .exe. Mac: download the arm64 DMG (Apple Silicon) or x64 DMG (Intel)."
+          fi
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: --win --x64
+            files: dist/*.exe
+            name: Windows
+          - os: macos-latest
+            target: --mac
+            files: |
+              dist/*.dmg
+              dist/*.zip
+            name: Mac
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - name: Build (and upload to a draft release when new)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: >
+          npx electron-builder ${{ matrix.target }}
+          --publish ${{ needs.version.outputs.publish }}
+          -c.publish.provider=github
+          -c.publish.owner=${{ github.repository_owner }}
+          -c.publish.repo=${{ github.event.repository.name }}
+          -c.publish.releaseType=draft
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Unique-AV-Show-Cue-${{ matrix.name }}-${{ needs.version.outputs.version }}
+          path: ${{ matrix.files }}
+
+  release:
+    needs: [version, build]
+    if: needs.version.outputs.publish == 'always'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "v${{ needs.version.outputs.version }}" --repo "$GITHUB_REPOSITORY" --draft=false --latest

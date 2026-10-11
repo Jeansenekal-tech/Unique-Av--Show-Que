@@ -21,7 +21,7 @@ html, body { margin: 0; height: 100%; }
 body {
   background: var(--bg); color: var(--text);
   font: 13px/1.35 "Segoe UI", system-ui, -apple-system, sans-serif;
-  display: grid; grid-template-rows: auto auto 1fr 168px;
+  display: grid; grid-template-rows: auto auto 1fr auto 168px;
   overflow: hidden; user-select: none;
 }
 button { font: inherit; color: inherit; cursor: pointer; }
@@ -72,6 +72,13 @@ code { font: 12px var(--mono); color: #b9d8ff; }
 .pill.err i { background: var(--stop); }
 .pill.blink i { background: #fff; box-shadow: 0 0 8px #fff; }
 .pill.icon { font-size: 15px; padding: 2px 9px; }
+.pill.hidden { display: none; }
+.pill.update { color: #9fd8ff; border-color: #2c5a80; }
+.pill.update i { background: var(--accent); }
+.pill.update.ready { background: #173a26; border-color: var(--go); color: #b8f5cf; }
+.pill.update.ready i { background: var(--go-hi); box-shadow: 0 0 6px var(--go-hi); }
+.upd-status { color: #c3c8d3; }
+.upd-status.err { color: #ff8b75; }
 #lockBtn.locked { background: #3a2f12; border-color: var(--warn); color: var(--warn); }
 #lockBtn.locked i { background: var(--warn); }
 .clock { font: 600 20px var(--mono); color: var(--muted); width: 100%; text-align: right; }
@@ -162,6 +169,28 @@ main { display: grid; grid-template-columns: 1fr 340px; min-height: 0; }
 body.locked .inspector .field input, body.locked .inspector .field select, body.locked .inspector .field textarea,
 body.locked .inspector .ibtn:not(.allow-locked), body.locked .colors button { pointer-events: none; opacity: .55; }
 body.locked .toolbar .add, body.locked .toolbar .edit { opacity: .35; pointer-events: none; }
+
+/* ---------- waveform ---------- */
+body.has-wave { grid-template-rows: auto auto 1fr auto 132px; }
+.wave-panel { display: flex; flex-direction: column; height: 210px; border-top: 1px solid var(--line); background: #12141a; min-height: 0; }
+.wave-panel.hidden { display: none; }
+.wave-bar { display: flex; align-items: center; gap: 12px; padding: 6px 12px; flex-wrap: wrap; row-gap: 4px; }
+.wave-title { font-weight: 600; min-width: 140px; max-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wave-group { display: flex; align-items: center; gap: 4px; }
+.wave-group.zoom { margin-left: auto; }
+.wave-bar button { background: var(--panel2); border: 1px solid var(--line); border-radius: 5px; padding: 3px 9px; }
+.wave-bar button:hover { border-color: var(--accent); }
+.wave-bar button.pv { background: #3a2f12; border-color: #6b5420; color: #ffd27a; min-width: 86px; }
+.wave-bar label.in, .wave-bar label.out { font: 700 11px var(--mono); display: flex; align-items: center; gap: 5px; }
+.wave-bar label.in { color: #27cf6d; } .wave-bar label.out { color: #ff5a3c; margin-left: 6px; }
+.wave-bar label.in input, .wave-bar label.out input { width: 72px; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 3px 6px; font: 12px var(--mono); color: var(--text); }
+.wave-bar label.in input:focus, .wave-bar label.out input:focus { outline: none; border-color: var(--accent); }
+.wave-len { margin-left: 10px; color: #c3c8d3; font-family: var(--mono); font-size: 12px; }
+.wave-len b { color: var(--text); }
+.wave-check { display: flex; align-items: center; gap: 5px; color: #c3c8d3; }
+#waveCanvas { flex: 1; width: 100%; min-height: 0; display: block; outline: none; border-top: 1px solid #1d2128; }
+#waveCanvas:focus { box-shadow: inset 0 0 0 1px #3fa7ff55; }
+.wave-panel.locked .edit-only, .wave-panel.locked label.in, .wave-panel.locked label.out { opacity: .4; pointer-events: none; }
 
 /* ---------- active panel ---------- */
 .active-panel { border-top: 1px solid var(--line); background: #14161b; display: flex; flex-direction: column; min-height: 0; }

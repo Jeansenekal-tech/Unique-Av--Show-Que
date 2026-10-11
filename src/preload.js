@@ -2,9 +2,9 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 const path = require('path');
 
-const INVOKE = ['show-open-dialog', 'show-save', 'resolve-media', 'pick-media', 'confirm', 'get-displays', 'osc-start', 'osc-stop'];
-const SEND = ['osc-send', 'output-cmd', 'output-open', 'output-close', 'output-event', 'set-dirty', 'set-title', 'quit-now'];
-const ON = ['menu', 'show-opened', 'osc-in', 'output-event', 'output-state', 'output-cmd', 'displays-changed', 'toast'];
+const INVOKE = ['show-open-dialog', 'show-save', 'resolve-media', 'pick-media', 'confirm', 'get-displays', 'osc-start', 'osc-stop', 'get-version', 'update-check', 'update-install'];
+const SEND = ['osc-send', 'output-cmd', 'output-open', 'output-close', 'output-event', 'set-dirty', 'set-title', 'quit-now', 'update-config'];
+const ON = ['menu', 'show-opened', 'osc-in', 'output-event', 'output-state', 'output-cmd', 'displays-changed', 'toast', 'update-status'];
 
 contextBridge.exposeInMainWorld('api', {
   invoke: (ch, ...a) => INVOKE.includes(ch) ? ipcRenderer.invoke(ch, ...a) : Promise.reject(new Error('blocked ' + ch)),
