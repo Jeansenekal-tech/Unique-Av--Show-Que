@@ -5,10 +5,11 @@ Show playback for theatre and live events, in the spirit of MiX16 GO — for Win
 - **Cue list with one GO button** – audio, video, image, stop, black-screen, OSC and MIDI cues
 - **Audio** – per-cue volume, fade in/out, start/end points, loop, and per-cue output device **and channels** (e.g. send cue 3 to outputs 5–6 of your interface)
 - **Video & images on a second screen** – full screen on a projector/TV, fades and crossfades, fit/fill/stretch, hold last frame
-- **Waveform trim editor** – select a song and its waveform appears at the bottom: drag the green IN and red OUT markers (or type times), drag the orange squares to set fade lengths, preview the cut, and tick *Fade at Out* to fade the song out automatically at the cut point. Your audio file is never changed.
+- **Waveform trim editor** – select a song and its waveform appears at the bottom: drag the green IN and red OUT markers (or type times), drag the orange squares to set fade lengths, set the cue's *Gain* (−24 to +12 dB; the waveform and peak readout show the result and turn red where it would clip), preview the cut, and tick *Fade at Out* to fade the song out automatically at the cut point. Your audio file is never changed.
 - **Follow** – start the next cue *with* this one or *after it ends*, with an optional delay
 - **MIDI control** – learn any note/CC/program change for GO, Stop All, Panic, Pause, Prev/Next, a master-volume fader, or to fire a specific cue
 - **Master meter** – a stereo peak meter next to the master fader shows the audio level going out of every output (audio cues and video sound), with peak hold and a clip warning (click the dB readout to reset it)
+- **Mixer** – next to the Playing list, one strip per audio output (the default output plus every interface your cues use) with a level meter, a fader in dB and a mute button, plus a Master strip. Mixer settings are saved with the show
 - **OSC control** – UDP port 53000 by default; also accepts MiX16-style addresses; optional standby feedback
 - **Show files** (`.showcue`) – save/load, double-click to open; media paths are also stored relative to the show file so a show folder can be moved to another PC
 - **Show lock**, Pause/Resume All, Stop All with fade, Panic, double-GO protection, live clock and remaining-time counters
@@ -69,7 +70,7 @@ npm run dist:mac   # on a Mac: build the Apple Silicon DMG into dist/
 
 - Drag audio, video or image files from Explorer onto the cue list, or use the **Add** buttons.
 - Click a cue to make it the standby cue and edit it on the right.
-- **Cutting a song**: select it, then drag the IN/OUT markers on the waveform. Click the waveform and press `I` / `O` to set points at the cursor; ←/→ nudges the cursor. *Hear start* / *Hear end* play the first/last 5 seconds of the cut. Preview plays on the computer's default output.
+- **Cutting a song**: select it, then drag the IN/OUT markers on the waveform. Click the waveform and press `I` / `O` to set points at the cursor; ←/→ nudges the cursor. *Hear start* / *Hear end* play the first/last 5 seconds of the cut. Preview plays on the computer's default output, with the cue's gain, and shows on the Default mixer strip.
 - **Settings (⚙)**: choose the output screen, default audio output, OSC port/feedback and MIDI mappings.
 - **Multichannel interfaces**: in Windows *Sound settings → your interface → Configure*, set the speaker layout (e.g. 7.1) so Windows exposes all outputs; then pick channels per cue. Click *Show device names* in Settings if devices appear unnamed.
 

@@ -74,6 +74,8 @@
     let loadToken = 0;
 
     const duration = () => (peaks && peaks.duration) || (cue && cue.duration) || 0;
+    const gainDb = () => (cue && cue.gain) || 0;
+    const gainLin = () => Math.pow(10, gainDb() / 20);
     const inPt = () => Math.max(0, cue.startAt || 0);
     const outPt = () => { const d = duration(); return cue.endAt > 0 ? Math.min(cue.endAt, d || cue.endAt) : d; };
 
@@ -165,6 +167,7 @@
       // waveform
       if (peaks) {
         const n = peaks.min.length;
+        const k = gainLin();
         for (let x = 0; x < w; x++) {
           const t0 = xToT(x, w), t1 = xToT(x + 1, w);
           let i0 = Math.floor(t0 * PEAK_RATE), i1 = Math.max(i0 + 1, Math.floor(t1 * PEAK_RATE));
@@ -173,7 +176,11 @@
           let lo = 0, hi = 0;
           for (let i = i0; i < i1; i++) { if (peaks.min[i] < lo) lo = peaks.min[i]; if (peaks.max[i] > hi) hi = peaks.max[i]; }
           const tm = (t0 + t1) / 2;
-          g.fillStyle = tm >= a && tm <= b ? (cue.type === 'video' ? '#b07ce8' : '#4fa8ff') : '#2c3442';
+          hi *= k; lo *= k;
+          const clip = hi > 1 || lo < -1;
+          hi = Math.min(1, hi); lo = Math.max(-1, lo);
+          const inCut = tm >= a && tm <= b;
+          g.fillStyle = inCut ? (clip ? '#ff5a3c' : cue.type === 'video' ? '#b07ce8' : '#4fa8ff') : '#2c3442';
           const y1 = mid - hi * (wh / 2 - 2), y2 = mid - lo * (wh / 2 - 2);
           g.fillRect(x, y1, 1, Math.max(1, y2 - y1));
         }
@@ -243,8 +250,34 @@
       $('#waveLen').textContent = duration() ? fmt(Math.max(0, b - a)) : '–';
       $('#waveFull').textContent = duration() ? fmt(duration()) : '–';
       $('#waveFadeEnd').checked = !!cue.fadeAtEnd;
+      $('#waveGain').value = gainDb();
+      if (document.activeElement !== $('#waveGainVal')) $('#waveGainVal').value = `${gainDb() > 0 ? '+' : ''}${gainDb().toFixed(1)} dB`;
+      syncPeak();
       $('#wavePrev').textContent = preview ? '■ Stop' : '▶ Preview';
       panel.classList.toggle('locked', isLocked());
+    }
+
+    // Loudest point of the cut after gain (from the drawn waveform, so approximate).
+    function syncPeak() {
+      const el = $('#wavePeak');
+      el.classList.remove('hot', 'clip');
+      if (!peaks) { el.textContent = ''; return; }
+      const n = peaks.min.length;
+      const i0 = Math.max(0, Math.floor(inPt() * PEAK_RATE)), i1 = Math.min(n, Math.ceil(outPt() * PEAK_RATE));
+      let p = 0;
+      for (let i = i0; i < i1; i++) p = Math.max(p, peaks.max[i], -peaks.min[i]);
+      const db = p > 0 ? 20 * Math.log10(p * gainLin()) : -Infinity;
+      el.textContent = isFinite(db) ? `peak ${db > 0 ? '+' : ''}${db.toFixed(1)} dB${db >= 0 ? ' CLIP' : ''}` : 'peak -∞';
+      el.classList.toggle('clip', db >= 0);
+      el.classList.toggle('hot', db > -1 && db < 0);
+    }
+
+    function setGain(db, final) {
+      if (!cue || isLocked()) { syncFields(); return; }
+      db = Math.max(-24, Math.min(12, Math.round(db * 2) / 2));
+      onChange(cue, { gain: db }, final);
+      if (preview && preview.audio) preview.audio.vol.gain.value = getVolume(cue);
+      syncFields(); draw();
     }
 
     function setPoint(which, t, final) {
@@ -274,17 +307,26 @@
     function startPreview(from, to) {
       stopPreview();
       if (!cue || !cue.file || isMissing(cue)) return;
-      const el = new Audio(api.mediaURL(cue.file));
-      el.volume = Math.max(0, Math.min(1, getVolume(cue)));
+      const el = new Audio();
+      el.crossOrigin = 'anonymous';
+      el.src = api.mediaURL(cue.file);
       el.currentTime = Math.max(0, from);
-      preview = { el, stopAt: to };
+      const pv = preview = { el, stopAt: to };
       el.addEventListener('ended', stopPreview);
-      el.play().catch(e => { toast('Preview failed: ' + e.message, 'err'); stopPreview(); });
       syncFields();
+      // Through the default output's mixer strip, so gain above 0 dB is heard and metered.
+      window.AudioRouter.connect(el, '', '1-2').then(audio => {
+        if (preview !== pv) { audio.disconnect(); return; }
+        pv.audio = audio;
+        audio.vol.gain.value = getVolume(cue);
+      }, () => { el.volume = Math.max(0, Math.min(1, getVolume(cue))); })
+        .then(() => { if (preview === pv) return el.play(); })
+        .catch(e => { toast('Preview failed: ' + e.message, 'err'); stopPreview(); });
     }
     function stopPreview() {
       if (!preview) return;
       try { preview.el.pause(); } catch (e) {}
+      if (preview.audio) preview.audio.disconnect();
       preview.el.removeAttribute('src'); preview.el.load();
       preview = null;
       if (cue) { syncFields(); draw(); }
@@ -381,6 +423,15 @@
     };
     timeField('#waveIn', 'in');
     timeField('#waveOut', 'out');
+    $('#waveGain').addEventListener('input', (e) => setGain(parseFloat(e.target.value), false));
+    $('#waveGain').addEventListener('change', (e) => { setGain(parseFloat(e.target.value), true); e.target.blur(); });
+    $('#waveGain').addEventListener('dblclick', () => setGain(0, true));
+    $('#waveGainVal').addEventListener('change', (e) => {
+      const v = parseFloat(String(e.target.value).replace(',', '.'));
+      if (isNaN(v)) { syncFields(); return; }
+      setGain(v, true); e.target.blur();
+    });
+    $('#waveGainVal').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.dispatchEvent(new Event('change')); });
     $('#waveFadeEnd').addEventListener('change', (e) => {
       if (!cue || isLocked()) { syncFields(); return; }
       const patch = { fadeAtEnd: e.target.checked };

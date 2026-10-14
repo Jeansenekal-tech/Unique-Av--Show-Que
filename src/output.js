@@ -6,6 +6,8 @@
   let z = 1;
 
   const emit = (evt) => window.api.send('output-event', evt);
+  // Cue volume (%) and gain (dB) as one linear level, before master.
+  const cueLevel = (cfg) => ((cfg.volume == null ? 100 : cfg.volume) / 100) * Math.pow(10, (cfg.gain || 0) / 20);
 
   function setOpacity(el, value, seconds) {
     el.style.transition = `opacity ${Math.max(0, seconds)}s linear`;
@@ -69,7 +71,7 @@
         if (c.startAt > 0) el.currentTime = c.startAt;
         L.audio = await window.AudioRouter.connect(el, c.device, c.route);
         if (L.audio.warning) emit({ evt: 'warning', id: c.id, message: L.audio.warning });
-        L.audio.vol.gain.value = (c.volume / 100) * master;
+        L.audio.vol.gain.value = cueLevel(c) * master;
         L.audio.fade.gain.value = c.fadeIn > 0 ? 0 : 1;
         el.addEventListener('ended', () => onEnd(L));
         await el.play();
@@ -133,12 +135,14 @@
     }
   }, 200);
 
-  // Report the video-audio level to the control window for the master meter.
+  // Report the video-audio levels to the control window for the meters.
   let lastLevel = false;
   setInterval(() => {
-    const { l, r } = window.AudioRouter.levels();
+    const outs = window.AudioRouter.levelsByLabel();
+    let l = 0, r = 0;
+    for (const v of Object.values(outs)) { l = Math.max(l, v.l); r = Math.max(r, v.r); }
     const loud = l > 0.0005 || r > 0.0005;
-    if (loud || lastLevel) emit({ evt: 'levels', l, r });
+    if (loud || lastLevel) emit({ evt: 'levels', l, r, outs });
     lastLevel = loud;
   }, 60);
 
@@ -158,10 +162,15 @@
       case 'resume': { const L = layers.get(c.id); if (L && L.video) L.video.play().catch(() => {}); break; }
       case 'pauseAll': for (const L of layers.values()) if (L.video) L.video.pause(); break;
       case 'resumeAll': for (const L of layers.values()) if (L.video && !L.stopping) L.video.play().catch(() => {}); break;
-      case 'volume': { const L = layers.get(c.id); if (L && L.audio) { L.cfg.volume = c.volume; L.audio.vol.gain.value = (c.volume / 100) * master; } break; }
+      case 'volume': {
+        const L = layers.get(c.id);
+        if (L && L.audio) { L.cfg.volume = c.volume; if (c.gain != null) L.cfg.gain = c.gain; L.audio.vol.gain.value = cueLevel(L.cfg) * master; }
+        break;
+      }
+      case 'mixer': window.AudioRouter.setMixer(c.mixer); break;
       case 'master':
         master = c.value / 100;
-        for (const L of layers.values()) if (L.audio) L.audio.vol.gain.value = (L.cfg.volume / 100) * master;
+        for (const L of layers.values()) if (L.audio) L.audio.vol.gain.value = cueLevel(L.cfg) * master;
         break;
       case 'identify': {
         const id = document.getElementById('ident');

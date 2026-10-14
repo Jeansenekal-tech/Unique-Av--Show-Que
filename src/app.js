@@ -53,7 +53,7 @@
   let announcedReady = null;
 
   function newShow() {
-    return { app: 'Unique AV Show Cue', version: 1, name: 'Untitled Show', masterVolume: 100, cues: [] };
+    return { app: 'Unique AV Show Cue', version: 1, name: 'Untitled Show', masterVolume: 100, mixer: {}, cues: [] };
   }
   function uid() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-3); }
 
@@ -85,6 +85,9 @@
   const cueById = (id) => show.cues.find(c => c.id === id);
   const indexOf = (id) => show.cues.findIndex(c => c.id === id);
   const master = () => (show.masterVolume == null ? 100 : show.masterVolume) / 100;
+  // Cue volume (%) and gain (dB) as one linear level, before master.
+  const cueLevel = (c) => ((c.volume == null ? 100 : c.volume) / 100) * Math.pow(10, (c.gain || 0) / 20);
+  const fmtDb = (db) => (db > 0 ? '+' : '') + db.toFixed(1);
 
   function nextNumber() {
     let max = 0;
@@ -177,6 +180,7 @@
     const len = cueLength(c);
     const hasFades = ['audio', 'video', 'image'].includes(c.type);
     const vol = (c.type === 'audio' || c.type === 'video') ? c.volume : '';
+    const gain = vol !== '' && c.gain ? c.gain : 0;
     const isMissing = missing.has(c.id) || (hasFades && !c.file);
     return `<div class="cue-row ${c.color ? 'c-' + c.color : ''} ${i === standby ? 'standby' : ''} ${c.id === selectedId ? 'selected' : ''} ${isMissing ? 'missing' : ''}"
         data-id="${c.id}" draggable="${!locked}">
@@ -187,7 +191,7 @@
       <div class="r mono">${len ? fmt(len) : (c.type === 'image' ? '<span class="dim">hold</span>' : '')}</div>
       <div class="r mono">${hasFades && c.fadeIn ? c.fadeIn + 's' : ''}</div>
       <div class="r mono">${hasFades && c.fadeOut ? c.fadeOut + 's' : (c.type === 'stop' || c.type === 'black') && c.fade ? c.fade + 's' : ''}</div>
-      <div class="r mono">${vol !== '' ? vol + '%' : ''}</div>
+      <div class="r mono${gain ? ' gained' : ''}"${gain ? ` title="Gain ${fmtDb(gain)} dB"` : ''}>${vol !== '' ? vol + '%' : ''}</div>
       <div class="dim">${esc(outputLabel(c))}</div>
       <div class="dim">${followLabel(c)}</div>
     </div>`;
@@ -200,6 +204,7 @@
     $('#cueCount').textContent = `${show.cues.length} cue${show.cues.length === 1 ? '' : 's'}`;
     renderStandby();
     updatePlayingRows();
+    renderMixer();
   }
 
   function renderStandby() {
@@ -387,6 +392,7 @@
     refreshRow(c);
     if (wave) wave.refresh();
     if (e.type === 'change' && ['follow', 'msg', 'device', 'type'].includes(key)) renderInspector();
+    if (key === 'device') renderMixer();
     if (key === 'number' || key === 'name' || key === 'notes') renderStandby();
   }
 
@@ -596,8 +602,8 @@
   }
 
   function setInstVolume(inst) {
-    if (inst.kind === 'audio' && inst.audio) inst.audio.vol.gain.value = (inst.cue.volume / 100) * master();
-    if (inst.kind === 'visual') api.send('output-cmd', { cmd: { cmd: 'volume', id: inst.id, volume: inst.cue.volume } });
+    if (inst.kind === 'audio' && inst.audio) inst.audio.vol.gain.value = cueLevel(inst.cue) * master();
+    if (inst.kind === 'visual') api.send('output-cmd', { cmd: { cmd: 'volume', id: inst.id, volume: inst.cue.volume, gain: inst.cue.gain || 0 } });
   }
 
   async function playAudio(c) {
@@ -676,12 +682,13 @@
       displayId: settings.outputDisplay,
       cmd: {
         cmd: 'play', id: inst.id, cueId: c.id, type: c.type, url: api.mediaURL(p),
-        volume: c.volume == null ? 100 : c.volume, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0,
+        volume: c.volume == null ? 100 : c.volume, gain: c.gain || 0, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0,
         loop: !!c.loop, fadeAtEnd: !!c.fadeAtEnd, startAt: c.startAt || 0, endAt: c.endAt || 0, device: c.device || '', route: c.route || '1-2',
         fit: c.fit || 'contain', hold: c.hold || 0, replace: c.replace !== false, holdLast: !!c.holdLast
       }
     });
     if (master() !== 1) api.send('output-cmd', { cmd: { cmd: 'master', value: show.masterVolume } });
+    sendMixer();
     renderActive();
     return inst;
   }
@@ -752,6 +759,8 @@
     show.masterVolume = Math.max(0, Math.min(100, Math.round(v)));
     $('#masterVol').value = show.masterVolume;
     $('#masterVal').textContent = show.masterVolume;
+    const mf = $('#mixStrips .strip.master .fader');
+    if (mf) { mf.value = show.masterVolume; mf.closest('.strip').querySelector('.st-db').textContent = show.masterVolume; }
     for (const inst of active.values()) if (inst.kind === 'audio') setInstVolume(inst);
     api.send('output-cmd', { cmd: { cmd: 'master', value: show.masterVolume } });
   }
@@ -805,56 +814,159 @@
         toast(inst ? `Cue ${inst.cue.number}: ${e.message}` : e.message, 'warn');
         break;
       case 'levels':
-        outLevels = { l: e.l, r: e.r, at: performance.now() };
+        outLevels = { l: e.l, r: e.r, outs: e.outs || {}, at: performance.now() };
         break;
     }
   });
 
-  // ------------------------------------------------------------------ master meter
-  // Peak meter for everything going out (this window's audio cues plus the
-  // output window's video audio), after cue volume and master volume.
-  let outLevels = { l: 0, r: 0, at: 0 };
+  // ------------------------------------------------------------------ meters + mixer
+  // Peak meters for everything going out (this window's audio cues plus the
+  // output window's video audio), after cue volume, master and mixer faders.
+  let outLevels = { l: 0, r: 0, outs: {}, at: 0 };
   const METER_FLOOR = -60;
-  const meterEls = ['#meterL', '#meterR'].map(sel => {
-    const ch = $(sel);
-    return { ch, bar: ch.querySelector('i'), hold: ch.querySelector('b'), shown: METER_FLOOR, peak: METER_FLOOR, peakAt: 0 };
-  });
+  const FADER_OFF = -40; // mixer fader at the bottom = off
   let clipped = false;
   const toDb = (v) => (v > 0 ? 20 * Math.log10(v) : -Infinity);
   const meterPos = (db) => Math.max(0, Math.min(1, (db - METER_FLOOR) / -METER_FLOOR));
+  const meterChan = (ch) => ({ ch, bar: ch.querySelector('i'), hold: ch.querySelector('b'), shown: METER_FLOOR, peak: METER_FLOOR, peakAt: 0 });
+  const topMeter = ['#meterL', '#meterR'].map(sel => meterChan($(sel)));
+  let strips = []; // [{ el, label, master, chans: [L, R] }]
+
+  // Moves one meter channel to level v (linear); vertical meters fill upwards.
+  function stepChan(m, v, now, vertical) {
+    const db = toDb(v);
+    // fast attack, ~20 dB/s release
+    m.shown = db >= m.shown ? db : Math.max(db, m.shown - 0.35);
+    if (!isFinite(m.shown)) m.shown = METER_FLOOR;
+    const rest = (1 - meterPos(m.shown)) * 100;
+    m.bar.style.clipPath = vertical ? `inset(${rest}% 0 0 0)` : `inset(0 ${rest}% 0 0)`;
+    if (db >= m.peak || now - m.peakAt > 1500) { m.peak = Math.max(db, METER_FLOOR); m.peakAt = now; }
+    if (vertical) m.hold.style.bottom = `calc(${meterPos(m.peak) * 100}% - 2px)`;
+    else m.hold.style.left = `calc(${meterPos(m.peak) * 100}% - 2px)`;
+    m.hold.style.opacity = m.peak > METER_FLOOR ? '1' : '0';
+    if (v >= 0.999) { clipped = true; m.ch.classList.add('clip'); }
+    return db;
+  }
+
   function drawMeter() {
     const now = performance.now();
-    const local = AR.levels();
-    const remoteOk = outputOpen && now - outLevels.at < 250;
-    const vals = [Math.max(local.l, remoteOk ? outLevels.l : 0), Math.max(local.r, remoteOk ? outLevels.r : 0)];
+    const local = AR.levelsByLabel();
+    const remote = outputOpen && now - outLevels.at < 250 ? (outLevels.outs || {}) : {};
+    const at = (label) => {
+      const a = local[label] || { l: 0, r: 0 }, b = remote[label] || { l: 0, r: 0 };
+      return [Math.max(a.l, b.l), Math.max(a.r, b.r)];
+    };
+    const total = [0, 0];
+    for (const label of new Set([...Object.keys(local), ...Object.keys(remote)])) {
+      const [l, r] = at(label);
+      total[0] = Math.max(total[0], l); total[1] = Math.max(total[1], r);
+    }
     let top = -Infinity;
-    vals.forEach((v, i) => {
-      const m = meterEls[i];
-      const db = toDb(v);
-      top = Math.max(top, db);
-      // fast attack, ~20 dB/s release
-      m.shown = db >= m.shown ? db : Math.max(db, m.shown - 0.35);
-      if (!isFinite(m.shown)) m.shown = METER_FLOOR;
-      m.bar.style.clipPath = `inset(0 ${(1 - meterPos(m.shown)) * 100}% 0 0)`;
-      if (db >= m.peak || now - m.peakAt > 1500) { m.peak = Math.max(db, METER_FLOOR); m.peakAt = now; }
-      m.hold.style.left = `calc(${meterPos(m.peak) * 100}% - 2px)`;
-      m.hold.style.opacity = m.peak > METER_FLOOR ? '1' : '0';
-      if (v >= 0.999) { clipped = true; m.ch.classList.add('clip'); }
-    });
+    total.forEach((v, i) => { top = Math.max(top, stepChan(topMeter[i], v, now, false)); });
     const read = $('#meterDb');
     read.textContent = isFinite(top) && top > METER_FLOOR ? `${top.toFixed(1)} dB` : '-∞ dB';
     read.classList.toggle('clip', clipped);
     read.classList.toggle('hot', !clipped && top > -6);
+    for (const st of strips) {
+      const vals = st.master ? total : at(st.label);
+      st.chans.forEach((m, i) => stepChan(m, vals[i], now, true));
+    }
     requestAnimationFrame(drawMeter);
   }
-  requestAnimationFrame(drawMeter);
-  $('#meterDb').addEventListener('click', () => {
+  function resetClip() {
     clipped = false;
-    meterEls.forEach(m => m.ch.classList.remove('clip'));
+    [...topMeter, ...strips.flatMap(st => st.chans)].forEach(m => m.ch.classList.remove('clip'));
+  }
+  $('#meterDb').addEventListener('click', resetClip);
+
+  // Outputs shown in the mixer: the default output plus every device a cue uses.
+  function mixerOutputs() {
+    const set = new Set(['']);
+    if (settings.defaultDevice) set.add(settings.defaultDevice);
+    show.cues.forEach(c => { if ((c.type === 'audio' || c.type === 'video') && c.device) set.add(c.device); });
+    return [...set];
+  }
+  const mixOf = (label) => Object.assign({ gain: 0, mute: false }, show.mixer && show.mixer[label]);
+  const faderText = (g) => (g <= FADER_OFF ? '-∞' : fmtDb(g));
+  const masterVal = () => (show.masterVolume == null ? 100 : show.masterVolume);
+
+  function sendMixer() {
+    AR.setMixer(show.mixer);
+    api.send('output-cmd', { cmd: { cmd: 'mixer', mixer: show.mixer || {} } });
+  }
+
+  function stripHTML(label) {
+    const m = mixOf(label);
+    const gone = AR.idForLabel(label) === null;
+    const name = label || 'Default';
+    return `<div class="strip${m.mute ? ' muted' : ''}${gone ? ' gone' : ''}" data-out="${esc(label)}">
+        <div class="st-name" title="${esc(name)}${gone ? ' – not connected, plays on the default output' : ''}">${esc(name)}</div>
+        <div class="st-body">
+          <div class="vmeter" title="Level going out of this output"><div class="vch"><i></i><b></b></div><div class="vch"><i></i><b></b></div></div>
+          <input type="range" class="fader" min="${FADER_OFF}" max="6" step="0.5" value="${m.gain}" title="Output level in dB (double-click for 0 dB)">
+        </div>
+        <div class="st-foot"><span class="st-db">${faderText(m.gain)}</span><button class="st-mute" title="Mute this output">M</button></div>
+      </div>`;
+  }
+
+  let mixKey = null;
+  function renderMixer(force) {
+    const outs = mixerOutputs();
+    const key = outs.map(l => l + (AR.idForLabel(l) === null ? '!' : '')).join('|');
+    if (key === mixKey && !force) return;
+    mixKey = key;
+    $('#mixStrips').innerHTML = outs.map(stripHTML).join('') + `<div class="strip master" data-out="*master">
+        <div class="st-name">Master</div>
+        <div class="st-body">
+          <div class="vmeter" title="Level going out of all outputs"><div class="vch"><i></i><b></b></div><div class="vch"><i></i><b></b></div></div>
+          <input type="range" class="fader" min="0" max="100" step="1" value="${masterVal()}" title="Master volume (double-click for 100)">
+        </div>
+        <div class="st-foot"><span class="st-db">${masterVal()}</span><button class="st-mute" disabled tabindex="-1">&nbsp;</button></div>
+      </div>`;
+    strips = $$('#mixStrips .strip').map(el => ({
+      el, label: el.dataset.out, master: el.classList.contains('master'),
+      chans: $$('.vch', el).map(meterChan)
+    }));
+  }
+
+  function setOutLevel(label, patch) {
+    show.mixer = show.mixer || {};
+    const m = Object.assign(mixOf(label), patch);
+    if (!m.mute && !m.gain) delete show.mixer[label]; else show.mixer[label] = m;
+    const st = strips.find(x => x.label === label);
+    if (st) {
+      st.el.querySelector('.fader').value = m.gain;
+      st.el.querySelector('.st-db').textContent = faderText(m.gain);
+      st.el.classList.toggle('muted', !!m.mute);
+    }
+    sendMixer();
+    markDirty();
+  }
+
+  const stripOf = (e) => { const el = e.target.closest('.strip'); return el && el.dataset.out; };
+  $('#mixStrips').addEventListener('input', (e) => {
+    if (!e.target.classList.contains('fader')) return;
+    const label = stripOf(e), v = parseFloat(e.target.value);
+    if (label === '*master') { setMaster(v); markDirty(); } else setOutLevel(label, { gain: v });
   });
+  $('#mixStrips').addEventListener('dblclick', (e) => {
+    if (!e.target.classList.contains('fader')) return;
+    const label = stripOf(e);
+    if (label === '*master') { setMaster(100); markDirty(); } else setOutLevel(label, { gain: 0 });
+  });
+  $('#mixStrips').addEventListener('click', (e) => {
+    const b = e.target.closest('.st-mute');
+    if (b && !b.disabled) { const label = stripOf(e); setOutLevel(label, { mute: !mixOf(label).mute }); b.blur(); }
+    if (e.target.closest('.vmeter')) resetClip();
+  });
+  $('#mixStrips').addEventListener('change', (e) => { if (e.target.classList.contains('fader')) e.target.blur(); });
+
+  renderMixer(true);
+  requestAnimationFrame(drawMeter);
 
   api.on('output-state', (s) => {
     outputOpen = !!s.open;
+    if (outputOpen) sendMixer();
     $('#outBtn').classList.toggle('on', outputOpen);
     if (!outputOpen) {
       for (const inst of [...active.values()]) if (inst.kind === 'visual') active.delete(inst.id);
@@ -1146,7 +1258,7 @@
     const t = e.target;
     switch (t.id) {
       case 'sDisplay': settings.outputDisplay = t.value ? Number(t.value) : null; break;
-      case 'sDefDev': settings.defaultDevice = t.value; break;
+      case 'sDefDev': settings.defaultDevice = t.value; renderMixer(); break;
       case 'sStopFade': settings.stopFade = Math.max(0, parseFloat(t.value) || 0); break;
       case 'sGoProt': settings.goProtect = Math.max(0, parseInt(t.value, 10) || 0); break;
       case 'sOscOn': settings.oscEnabled = t.checked; saveSettings(); await applyOsc(); renderSettings(); return;
@@ -1225,8 +1337,10 @@
     dirty = false;
     api.send('set-dirty', false);
     $('#showName').value = show.name;
+    if (!show.mixer || typeof show.mixer !== 'object') show.mixer = {};
     setMaster(show.masterVolume == null ? 100 : show.masterVolume);
     renderList(); renderInspector(); updateTitle();
+    renderMixer(true); sendMixer();
     if (missing.size) toast(`${missing.size} media file${missing.size > 1 ? 's are' : ' is'} missing – choose them again in the cue inspector`, 'warn');
   }
 
@@ -1237,6 +1351,7 @@
     dirty = false; api.send('set-dirty', false);
     $('#showName').value = show.name;
     setMaster(100); renderList(); renderInspector(); updateTitle();
+    renderMixer(true); sendMixer();
   }
 
   async function openCmd() {
@@ -1413,7 +1528,7 @@
   }, 500);
 
   // device changes
-  if (navigator.mediaDevices) navigator.mediaDevices.addEventListener('devicechange', async () => { await AR.refreshDevices(); renderInspector(); });
+  if (navigator.mediaDevices) navigator.mediaDevices.addEventListener('devicechange', async () => { await AR.refreshDevices(); renderInspector(); renderMixer(); });
 
   // ------------------------------------------------------------------ start
   // ------------------------------------------------------------------ updates
@@ -1489,7 +1604,7 @@
       api, toast,
       isLocked: () => locked,
       isMissing: (c) => missing.has(c.id),
-      getVolume: (c) => ((c.volume == null ? 100 : c.volume) / 100) * master(),
+      getVolume: (c) => cueLevel(c) * master(),
       getPlayhead: (cueId) => {
         let pos = null;
         for (const inst of active.values()) {
@@ -1502,6 +1617,7 @@
         const onlyDuration = Object.keys(patch).length === 1 && 'duration' in patch;
         Object.assign(c, patch);
         if (!onlyDuration && Object.keys(patch).length) markDirty();
+        if ('gain' in patch) for (const inst of active.values()) if (inst.cue.id === c.id) setInstVolume(inst);
         refreshRow(c);
         if (c.id !== selectedId) return;
         for (const k of Object.keys(patch)) {
@@ -1519,6 +1635,7 @@
     $('#showName').value = show.name;
     await AR.refreshDevices();
     renderList(); renderInspector(); renderActive(); updateTitle();
+    renderMixer(true);
     initMidi();
     applyOsc();
     try { appVersion = await api.invoke('get-version'); } catch (e) {}

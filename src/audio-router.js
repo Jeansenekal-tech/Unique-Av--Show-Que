@@ -3,6 +3,8 @@
 (function () {
   const ctxs = new Map();
   const meters = new Map(); // ctx -> { input, analysers: [AnalyserNode], buf }
+  const buses = new Map();  // ctx -> { gain: GainNode, label }
+  let mixer = {};           // device label ('' = default) -> { gain: dB, mute: bool }
   let devices = []; // [{deviceId,label}]
 
   async function refreshDevices() {
@@ -42,17 +44,49 @@
       d.channelCountMode = 'explicit';
       d.channelInterpretation = 'discrete';
       ctxs.set(key, c);
+      addBus(c, key === 'default' ? '' : labelFor(deviceId));
       addMeter(c);
     }
     if (c.state === 'suspended') { try { await c.resume(); } catch (e) {} }
     return c;
   }
 
-  // Level tap on everything sent to a device, after cue volume and master.
+  function labelFor(deviceId) {
+    const d = devices.find(x => x.deviceId === deviceId);
+    return d ? d.label : '';
+  }
+
+  // Output bus per device: every cue on that device goes through its mixer fader.
+  function addBus(c, label) {
+    const n = c.destination.channelCount;
+    const gain = c.createGain();
+    gain.channelCount = n; gain.channelCountMode = 'explicit'; gain.channelInterpretation = 'discrete';
+    gain.connect(c.destination);
+    buses.set(c, { gain, label });
+    applyBus(c);
+  }
+
+  const dbToGain = (db) => (db <= -40 ? 0 : Math.pow(10, db / 20));
+
+  function applyBus(c) {
+    const b = buses.get(c);
+    if (!b) return;
+    const m = mixer[b.label] || {};
+    const target = m.mute ? 0 : dbToGain(m.gain == null ? 0 : m.gain);
+    const now = c.currentTime;
+    b.gain.gain.cancelScheduledValues(now);
+    b.gain.gain.setTargetAtTime(target, now, 0.015);
+  }
+
+  function setMixer(m) {
+    mixer = m || {};
+    for (const c of buses.keys()) applyBus(c);
+  }
+
+  // Level tap on everything sent to a device, after cue volume, master and the mixer fader.
   function addMeter(c) {
     const n = c.destination.channelCount;
-    const input = c.createGain();
-    input.channelCount = n; input.channelCountMode = 'explicit'; input.channelInterpretation = 'discrete';
+    const input = buses.get(c).gain;
     const split = c.createChannelSplitter(n);
     input.connect(split);
     const analysers = [];
@@ -65,21 +99,30 @@
     meters.set(c, { input, analysers, buf: new Float32Array(1024) });
   }
 
-  // Peak level (linear 0..1+) across all outputs. Odd channels count as
+  // Peak level (linear 0..1+) per output device label. Odd channels count as
   // left, even channels as right; a single-channel device feeds both.
-  function levels() {
-    let l = 0, r = 0;
+  function levelsByLabel() {
+    const out = {};
     for (const [c, m] of meters) {
       if (c.state !== 'running') continue;
+      const label = buses.get(c).label;
+      const lv = out[label] || (out[label] = { l: 0, r: 0 });
       m.analysers.forEach((a, i) => {
         a.getFloatTimeDomainData(m.buf);
         let p = 0;
         for (let k = 0; k < m.buf.length; k++) { const v = Math.abs(m.buf[k]); if (v > p) p = v; }
-        if (m.analysers.length === 1) { l = Math.max(l, p); r = Math.max(r, p); }
-        else if (i % 2 === 0) l = Math.max(l, p);
-        else r = Math.max(r, p);
+        if (m.analysers.length === 1) { lv.l = Math.max(lv.l, p); lv.r = Math.max(lv.r, p); }
+        else if (i % 2 === 0) lv.l = Math.max(lv.l, p);
+        else lv.r = Math.max(lv.r, p);
       });
     }
+    return out;
+  }
+
+  // Peak level across all outputs.
+  function levels() {
+    let l = 0, r = 0;
+    for (const v of Object.values(levelsByLabel())) { l = Math.max(l, v.l); r = Math.max(r, v.r); }
     return { l, r };
   }
 
@@ -101,6 +144,7 @@
   async function connect(el, deviceLabel, route) {
     let warning = '';
     let id = idForLabel(deviceLabel);
+    if (id === null) { await refreshDevices(); id = idForLabel(deviceLabel); } // device list not read yet (output window)
     if (id === null) { warning = `Output "${deviceLabel}" not found – using default output`; id = ''; }
     const ctx = await ctxFor(id);
     const n = ctx.destination.channelCount;
@@ -137,9 +181,7 @@
       split.connect(merger, 1, start + 1);
       nodes.push(split);
     }
-    merger.connect(ctx.destination);
-    const meter = meters.get(ctx);
-    if (meter) merger.connect(meter.input);
+    merger.connect(buses.get(ctx).gain);
 
     return {
       ctx, fade, vol, warning,
@@ -164,5 +206,5 @@
     return opts;
   }
 
-  window.AudioRouter = { refreshDevices, unlockLabels, idForLabel, connect, ramp, channelCount, routeOptions, levels, get devices() { return devices; } };
+  window.AudioRouter = { refreshDevices, unlockLabels, idForLabel, connect, ramp, channelCount, routeOptions, levels, levelsByLabel, setMixer, dbToGain, get devices() { return devices; } };
 })();
