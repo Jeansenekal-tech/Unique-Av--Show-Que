@@ -26,15 +26,20 @@ jobs:
         run: |
           VERSION=$(node -p "require('./package.json').version")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+          # A published release means this version is done; a leftover draft
+          # (from a run that failed) is reused and finished this time.
+          DRAFT=$(gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft 2>/dev/null || echo none)
+          if [ "$DRAFT" = "false" ]; then
             echo "publish=never" >> "$GITHUB_OUTPUT"
             echo "Version $VERSION is already released – building without publishing. Raise the version in package.json to publish an update."
           else
             echo "publish=always" >> "$GITHUB_OUTPUT"
             echo "Publishing version $VERSION."
-            # Create the draft once, so the Windows and Mac builds both upload into it.
-            gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
-              --title "Unique AV Show Cue $VERSION" --notes "Windows: download the Setup .exe. Mac: download the arm64 DMG (Apple Silicon) or x64 DMG (Intel)."
+            if [ "$DRAFT" = "none" ]; then
+              # Create the draft once, so the Windows and Mac builds both upload into it.
+              gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
+                --title "Unique AV Show Cue $VERSION" --notes "Windows: download the Setup .exe. Mac: download the arm64 DMG (Apple Silicon) or x64 DMG (Intel)."
+            fi
           fi
 
   build:
@@ -60,22 +65,39 @@ jobs:
         with:
           node-version: 20
       - run: npm install
+      - name: Stop Spotlight indexing (it holds DMG volumes open)
+        if: runner.os == 'macOS'
+        run: sudo mdutil -a -i off || true
       - name: Build (and upload to a draft release when new)
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: >
-          npx electron-builder ${{ matrix.target }}
-          --publish ${{ needs.version.outputs.publish }}
-          -c.publish.provider=github
-          -c.publish.owner=${{ github.repository_owner }}
-          -c.publish.repo=${{ github.event.repository.name }}
-          -c.publish.releaseType=draft
+        run: |
+          # macOS sometimes can't detach the DMG volume ("hdiutil detach" fails); try again.
+          for attempt in 1 2 3; do
+            npx electron-builder ${{ matrix.target }} \
+              --publish ${{ needs.version.outputs.publish }} \
+              -c.publish.provider=github \
+              -c.publish.owner=${{ github.repository_owner }} \
+              -c.publish.repo=${{ github.event.repository.name }} \
+              -c.publish.releaseType=draft && exit 0
+            echo "Build attempt $attempt failed."
+            if [ "$RUNNER_OS" = "macOS" ]; then
+              for v in /Volumes/Unique*; do [ -d "$v" ] && hdiutil detach -force "$v" || true; done
+            fi
+            sleep 15
+          done
+          exit 1
+      # Releases already hold the installers, so only keep a copy for builds that
+      # don't publish. Running out of artifact storage must not fail the build.
       - uses: actions/upload-artifact@v4
+        if: needs.version.outputs.publish != 'always'
+        continue-on-error: true
         with:
           name: Unique-AV-Show-Cue-${{ matrix.name }}-${{ needs.version.outputs.version }}
           path: ${{ matrix.files }}
+          retention-days: 5
 
   release:
     needs: [version, build]
