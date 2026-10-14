@@ -22,9 +22,12 @@
       <button id="panicBtn" class="tbtn panic" title="Stop everything now (Shift+Esc)">Panic</button>
     </div>
     <div class="master">
-      <label for="masterVol">MASTER</label>
+      <div class="master-top"><label for="masterVol">MASTER <span id="masterVal">100</span></label><span id="meterDb" class="meter-db" title="Peak output level (dBFS). Click to reset the clip warning.">-∞ dB</span></div>
+      <div class="meter" id="masterMeter" title="Audio level going out of all outputs (after master volume)">
+        <span>L</span><div class="ch" id="meterL"><i></i><b></b></div>
+        <span>R</span><div class="ch" id="meterR"><i></i><b></b></div>
+      </div>
       <input id="masterVol" type="range" min="0" max="100" step="1" value="100">
-      <span id="masterVal">100</span>
     </div>
     <div class="status">
       <button id="outBtn" class="pill" title="Open / close the video output window"><i></i>Output</button>

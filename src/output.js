@@ -133,6 +133,15 @@
     }
   }, 200);
 
+  // Report the video-audio level to the control window for the master meter.
+  let lastLevel = false;
+  setInterval(() => {
+    const { l, r } = window.AudioRouter.levels();
+    const loud = l > 0.0005 || r > 0.0005;
+    if (loud || lastLevel) emit({ evt: 'levels', l, r });
+    lastLevel = loud;
+  }, 60);
+
   window.api.on('output-cmd', (c) => {
     switch (c.cmd) {
       case 'play': play(c); break;
