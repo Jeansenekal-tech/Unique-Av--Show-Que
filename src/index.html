@@ -94,6 +94,11 @@
         <button data-w="checkOut" title="Hear the last 5 seconds of the cut">Hear end</button>
       </div>
       <label class="wave-check edit-only" title="Fade out automatically before the OUT point, using the cue's fade-out time"><input type="checkbox" id="waveFadeEnd"> Fade at Out</label>
+      <div class="wave-group gain">
+        <label class="wave-gain edit-only" title="Cue gain: boost or cut this cue's level. The waveform shows the result. Double-click to reset to 0 dB.">GAIN <input id="waveGain" type="range" min="-24" max="12" step="0.5" value="0"></label>
+        <input id="waveGainVal" class="wave-gain-val edit-only" type="text" spellcheck="false" title="Gain in dB (type a value)">
+        <span id="wavePeak" class="wave-peak" title="Loudest point of the cut after gain (0 dB = clipping)"></span>
+      </div>
       <div class="wave-group zoom">
         <button data-w="zout" title="Zoom out (-)">−</button>
         <button data-w="zin" title="Zoom in (+ or mouse wheel)">+</button>
@@ -104,9 +109,15 @@
     <canvas id="waveCanvas" tabindex="0"></canvas>
   </section>
 
-  <footer class="active-panel">
-    <div class="active-head"><span>PLAYING</span><span id="activeCount"></span></div>
-    <div id="activeList" class="active-list"></div>
+  <footer class="bottom">
+    <section class="active-panel">
+      <div class="active-head"><span>PLAYING</span><span id="activeCount"></span></div>
+      <div id="activeList" class="active-list"></div>
+    </section>
+    <section class="mixer-panel" id="mixerPanel">
+      <div class="active-head"><span>MIXER</span><span class="mix-hint">dB · double-click a fader to reset</span></div>
+      <div id="mixStrips" class="mix-strips"></div>
+    </section>
   </footer>
 
   <div id="settingsModal" class="modal hidden">
