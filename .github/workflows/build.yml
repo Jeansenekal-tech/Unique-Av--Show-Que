@@ -52,13 +52,16 @@ jobs:
             target: --win --x64
             files: dist/*.exe
             name: Windows
-          - os: macos-latest
+          # Intel Mac runner: GitHub's Apple Silicon runners are often out of
+          # capacity. It still builds both the arm64 and x64 DMGs.
+          - os: macos-15-intel
             target: --mac
             files: |
               dist/*.dmg
               dist/*.zip
             name: Mac
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -101,10 +104,23 @@ jobs:
 
   release:
     needs: [version, build]
-    if: needs.version.outputs.publish == 'always'
+    # Publish once the Windows installer is in the release, even if the Mac
+    # build failed or never got a runner – Windows copies update themselves.
+    if: always() && needs.version.outputs.publish == 'always'
     runs-on: ubuntu-latest
     steps:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "v${{ needs.version.outputs.version }}" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          TAG: v${{ needs.version.outputs.version }}
+        run: |
+          ASSETS=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')
+          echo "$ASSETS"
+          if ! grep -qx 'latest.yml' <<<"$ASSETS"; then
+            echo "::error::The Windows build is not in the release yet – not publishing."
+            exit 1
+          fi
+          if ! grep -qx 'latest-mac.yml' <<<"$ASSETS"; then
+            echo "::warning::The Mac build is missing from $TAG – publishing for Windows now. Re-run the failed Mac job to add it."
+          fi
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
