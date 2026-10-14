@@ -85,11 +85,17 @@ function webPrefs() {
 }
 
 function createMainWindow() {
+  // Fit the screen it opens on (laptops are often 1366×768 or scaled 125–150%).
+  const wa = screen.getPrimaryDisplay().workAreaSize;
+  const small = wa.width < 1400 || wa.height < 880;
   mainWin = new BrowserWindow({
-    width: 1400, height: 880, minWidth: 1000, minHeight: 640,
+    width: Math.min(1400, wa.width), height: Math.min(880, wa.height),
+    minWidth: Math.min(900, wa.width), minHeight: Math.min(560, wa.height),
+    center: true, show: !small,
     title: APP_NAME, backgroundColor: '#111317',
     webPreferences: webPrefs()
   });
+  if (small) { mainWin.maximize(); mainWin.show(); }
   mainWin.loadFile(path.join(__dirname, 'index.html'));
   mainWin.on('close', (e) => {
     if (!isDirty) return;

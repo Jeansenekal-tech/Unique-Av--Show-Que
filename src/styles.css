@@ -21,7 +21,7 @@ html, body { margin: 0; height: 100%; }
 body {
   background: var(--bg); color: var(--text);
   font: 13px/1.35 "Segoe UI", system-ui, -apple-system, sans-serif;
-  display: grid; grid-template-rows: auto auto minmax(0, 1fr) 196px;
+  display: grid; grid-template-rows: auto auto minmax(0, 1fr) clamp(130px, 24vh, 196px);
   overflow: hidden; user-select: none;
 }
 button { font: inherit; color: inherit; cursor: pointer; }
@@ -181,8 +181,8 @@ body.locked .inspector .ibtn:not(.allow-locked), body.locked .colors button { po
 body.locked .toolbar .add, body.locked .toolbar .edit { opacity: .35; pointer-events: none; }
 
 /* ---------- waveform ---------- */
-body.has-wave { grid-template-rows: auto auto minmax(0, 1fr) auto 172px; }
-.wave-panel { display: flex; flex-direction: column; height: 210px; border-top: 1px solid var(--line); background: #12141a; min-height: 0; }
+body.has-wave { grid-template-rows: auto auto minmax(0, 1fr) auto clamp(120px, 20vh, 172px); }
+.wave-panel { display: flex; flex-direction: column; height: clamp(140px, 26vh, 210px); border-top: 1px solid var(--line); background: #12141a; min-height: 0; }
 .wave-panel.hidden { display: none; }
 .wave-bar { display: flex; align-items: center; gap: 12px; padding: 6px 12px; flex-wrap: wrap; row-gap: 4px; }
 .wave-title { font-weight: 600; min-width: 140px; max-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -285,3 +285,25 @@ body.has-wave { grid-template-rows: auto auto minmax(0, 1fr) auto 172px; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #2c313b; border-radius: 5px; border: 2px solid var(--bg); }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------- short screens (laptops, scaled displays) ---------- */
+@media (max-height: 800px) {
+  .topbar { padding: 6px 10px; gap: 10px; }
+  .go { min-height: 64px; width: 112px; font-size: 30px; }
+  .standby { padding: 5px 12px; }
+  .clock { font-size: 16px; }
+  .toolbar { padding: 4px 12px; }
+  .toasts { bottom: 150px; }
+}
+
+/* ---------- narrower screens: keep the waveform toolbar on one line ---------- */
+@media (max-width: 1500px) {
+  .wave-bar { gap: 8px; padding: 5px 10px; }
+  .wave-title { min-width: 90px; max-width: 150px; }
+  .wave-bar button { padding: 3px 7px; }
+  .wave-bar button.pv { min-width: 0; }
+  .wave-len { margin-left: 4px; }
+  .wave-bar label.wave-gain input { width: 70px; }
+  .wave-gain-val { width: 58px; }
+  .wave-peak { min-width: 0; }
+}
