@@ -307,3 +307,17 @@ body.has-wave { grid-template-rows: auto auto minmax(0, 1fr) auto clamp(120px, 2
   .wave-gain-val { width: 58px; }
   .wave-peak { min-width: 0; }
 }
+
+/* ---------- narrow windows (laptops with display scaling) ---------- */
+@media (max-width: 1300px) {
+  .topbar { gap: 8px; }
+  .go { width: 100px; font-size: 30px; }
+  .standby { min-width: 120px; padding: 5px 10px; }
+  .standby-cue { font-size: 18px; }
+  .tbtn { padding: 6px 9px; }
+  .topbar .master { width: 140px; }
+  .status { width: auto; flex: 0 1 170px; min-width: 0; }
+  .pill { padding: 3px 8px; }
+  .toolbar { flex-wrap: wrap; row-gap: 4px; }
+  main { grid-template-columns: minmax(0, 1fr) 280px; }
+}
