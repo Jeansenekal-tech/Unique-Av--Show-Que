@@ -2,6 +2,7 @@
 // routed to a stereo pair or a single channel of that device.
 (function () {
   const ctxs = new Map();
+  const meters = new Map(); // ctx -> { input, analysers: [AnalyserNode], buf }
   let devices = []; // [{deviceId,label}]
 
   async function refreshDevices() {
@@ -41,9 +42,45 @@
       d.channelCountMode = 'explicit';
       d.channelInterpretation = 'discrete';
       ctxs.set(key, c);
+      addMeter(c);
     }
     if (c.state === 'suspended') { try { await c.resume(); } catch (e) {} }
     return c;
+  }
+
+  // Level tap on everything sent to a device, after cue volume and master.
+  function addMeter(c) {
+    const n = c.destination.channelCount;
+    const input = c.createGain();
+    input.channelCount = n; input.channelCountMode = 'explicit'; input.channelInterpretation = 'discrete';
+    const split = c.createChannelSplitter(n);
+    input.connect(split);
+    const analysers = [];
+    for (let i = 0; i < n; i++) {
+      const a = c.createAnalyser();
+      a.fftSize = 1024;
+      split.connect(a, i);
+      analysers.push(a);
+    }
+    meters.set(c, { input, analysers, buf: new Float32Array(1024) });
+  }
+
+  // Peak level (linear 0..1+) across all outputs. Odd channels count as
+  // left, even channels as right; a single-channel device feeds both.
+  function levels() {
+    let l = 0, r = 0;
+    for (const [c, m] of meters) {
+      if (c.state !== 'running') continue;
+      m.analysers.forEach((a, i) => {
+        a.getFloatTimeDomainData(m.buf);
+        let p = 0;
+        for (let k = 0; k < m.buf.length; k++) { const v = Math.abs(m.buf[k]); if (v > p) p = v; }
+        if (m.analysers.length === 1) { l = Math.max(l, p); r = Math.max(r, p); }
+        else if (i % 2 === 0) l = Math.max(l, p);
+        else r = Math.max(r, p);
+      });
+    }
+    return { l, r };
   }
 
   async function channelCount(label) {
@@ -101,6 +138,8 @@
       nodes.push(split);
     }
     merger.connect(ctx.destination);
+    const meter = meters.get(ctx);
+    if (meter) merger.connect(meter.input);
 
     return {
       ctx, fade, vol, warning,
@@ -125,5 +164,5 @@
     return opts;
   }
 
-  window.AudioRouter = { refreshDevices, unlockLabels, idForLabel, connect, ramp, channelCount, routeOptions, get devices() { return devices; } };
+  window.AudioRouter = { refreshDevices, unlockLabels, idForLabel, connect, ramp, channelCount, routeOptions, levels, get devices() { return devices; } };
 })();

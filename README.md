@@ -8,6 +8,7 @@ Show playback for theatre and live events, in the spirit of MiX16 GO — for Win
 - **Waveform trim editor** – select a song and its waveform appears at the bottom: drag the green IN and red OUT markers (or type times), drag the orange squares to set fade lengths, preview the cut, and tick *Fade at Out* to fade the song out automatically at the cut point. Your audio file is never changed.
 - **Follow** – start the next cue *with* this one or *after it ends*, with an optional delay
 - **MIDI control** – learn any note/CC/program change for GO, Stop All, Panic, Pause, Prev/Next, a master-volume fader, or to fire a specific cue
+- **Master meter** – a stereo peak meter next to the master fader shows the audio level going out of every output (audio cues and video sound), with peak hold and a clip warning (click the dB readout to reset it)
 - **OSC control** – UDP port 53000 by default; also accepts MiX16-style addresses; optional standby feedback
 - **Show files** (`.showcue`) – save/load, double-click to open; media paths are also stored relative to the show file so a show folder can be moved to another PC
 - **Show lock**, Pause/Resume All, Stop All with fade, Panic, double-GO protection, live clock and remaining-time counters

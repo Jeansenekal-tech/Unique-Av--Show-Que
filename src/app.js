@@ -804,7 +804,53 @@
       case 'warning':
         toast(inst ? `Cue ${inst.cue.number}: ${e.message}` : e.message, 'warn');
         break;
+      case 'levels':
+        outLevels = { l: e.l, r: e.r, at: performance.now() };
+        break;
     }
+  });
+
+  // ------------------------------------------------------------------ master meter
+  // Peak meter for everything going out (this window's audio cues plus the
+  // output window's video audio), after cue volume and master volume.
+  let outLevels = { l: 0, r: 0, at: 0 };
+  const METER_FLOOR = -60;
+  const meterEls = ['#meterL', '#meterR'].map(sel => {
+    const ch = $(sel);
+    return { ch, bar: ch.querySelector('i'), hold: ch.querySelector('b'), shown: METER_FLOOR, peak: METER_FLOOR, peakAt: 0 };
+  });
+  let clipped = false;
+  const toDb = (v) => (v > 0 ? 20 * Math.log10(v) : -Infinity);
+  const meterPos = (db) => Math.max(0, Math.min(1, (db - METER_FLOOR) / -METER_FLOOR));
+  function drawMeter() {
+    const now = performance.now();
+    const local = AR.levels();
+    const remoteOk = outputOpen && now - outLevels.at < 250;
+    const vals = [Math.max(local.l, remoteOk ? outLevels.l : 0), Math.max(local.r, remoteOk ? outLevels.r : 0)];
+    let top = -Infinity;
+    vals.forEach((v, i) => {
+      const m = meterEls[i];
+      const db = toDb(v);
+      top = Math.max(top, db);
+      // fast attack, ~20 dB/s release
+      m.shown = db >= m.shown ? db : Math.max(db, m.shown - 0.35);
+      if (!isFinite(m.shown)) m.shown = METER_FLOOR;
+      m.bar.style.clipPath = `inset(0 ${(1 - meterPos(m.shown)) * 100}% 0 0)`;
+      if (db >= m.peak || now - m.peakAt > 1500) { m.peak = Math.max(db, METER_FLOOR); m.peakAt = now; }
+      m.hold.style.left = `calc(${meterPos(m.peak) * 100}% - 2px)`;
+      m.hold.style.opacity = m.peak > METER_FLOOR ? '1' : '0';
+      if (v >= 0.999) { clipped = true; m.ch.classList.add('clip'); }
+    });
+    const read = $('#meterDb');
+    read.textContent = isFinite(top) && top > METER_FLOOR ? `${top.toFixed(1)} dB` : '-∞ dB';
+    read.classList.toggle('clip', clipped);
+    read.classList.toggle('hot', !clipped && top > -6);
+    requestAnimationFrame(drawMeter);
+  }
+  requestAnimationFrame(drawMeter);
+  $('#meterDb').addEventListener('click', () => {
+    clipped = false;
+    meterEls.forEach(m => m.ch.classList.remove('clip'));
   });
 
   api.on('output-state', (s) => {
