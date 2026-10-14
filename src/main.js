@@ -167,7 +167,9 @@ function sendToMain(ch, data) {
 
 function sendToOutput(cmd, displayId) {
   if (!outWin) {
-    if (cmd && (cmd.cmd === 'stopAll' || cmd.cmd === 'stop' || cmd.cmd === 'clear' || cmd.cmd === 'master' || cmd.cmd === 'pauseAll' || cmd.cmd === 'resumeAll')) return;
+    // Only showing something opens the window. Volume, mixer, master and stop
+    // commands have nothing to act on yet; the mixer is re-sent when it opens.
+    if (!cmd || (cmd.cmd !== 'play' && cmd.cmd !== 'identify')) return;
     outQueue.push(cmd);
     createOutputWindow(displayId);
     return;
