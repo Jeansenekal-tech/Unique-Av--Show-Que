@@ -34,6 +34,8 @@
   let dirty = false;
   let standby = 0;
   let selectedId = null;
+  let selectedFolderId = null;
+  let renamingFolderId = null;
   let locked = false;
   let pausedAll = false;
   let lastGo = 0;
@@ -53,7 +55,7 @@
   let announcedReady = null;
 
   function newShow() {
-    return { app: 'Unique AV Show Cue', version: 1, name: 'Untitled Show', masterVolume: 100, mixer: {}, cues: [] };
+    return { app: 'Unique AV Show Cue', version: 1, name: 'Untitled Show', masterVolume: 100, mixer: {}, folders: [], cues: [] };
   }
   function uid() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-3); }
 
@@ -88,6 +90,140 @@
   // Cue volume (%) and gain (dB) as one linear level, before master.
   const cueLevel = (c) => ((c.volume == null ? 100 : c.volume) / 100) * Math.pow(10, (c.gain || 0) / 20);
   const fmtDb = (db) => (db > 0 ? '+' : '') + db.toFixed(1);
+
+  // ------------------------------------------------------------------ folders
+  // Folders (sets) group cues inside the one running order. show.cues stays a
+  // flat list in GO order; each cue may carry a folderId. Cues not in a folder
+  // sit at the top, then each folder's cues in folder order.
+  const folderById = (id) => show.folders.find(f => f.id === id);
+  const groupOf = (c) => c.folderId || '';
+  const groupIds = () => [''].concat(show.folders.map(f => f.id));
+  const groupRank = (id) => (id ? show.folders.findIndex(f => f.id === id) + 1 : 0);
+  const folderCues = (id) => show.cues.filter(c => groupOf(c) === id);
+
+  // Keeps each folder's cues together, in folder order, without changing the
+  // order of cues inside a folder. The standby cue stays the standby cue.
+  function normalizeFolders() {
+    if (!Array.isArray(show.folders)) show.folders = [];
+    show.cues.forEach(c => { if (c.folderId && !folderById(c.folderId)) c.folderId = ''; });
+    const standbyId = show.cues[standby] ? show.cues[standby].id : null;
+    const rank = {};
+    groupIds().forEach((id, r) => { rank[id] = r; });
+    show.cues = show.cues.map((c, i) => [c, i])
+      .sort((a, b) => (rank[groupOf(a[0])] - rank[groupOf(b[0])]) || (a[1] - b[1]))
+      .map(x => x[0]);
+    if (standbyId) standby = indexOf(standbyId);
+  }
+
+  function folderLength(id) {
+    return folderCues(id).reduce((t, c) => t + (cueLength(c) || 0), 0);
+  }
+
+  function newFolderName() {
+    let n = show.folders.length + 1;
+    while (show.folders.some(f => f.name === `Set ${n}`)) n++;
+    return `Set ${n}`;
+  }
+
+  function addFolder() {
+    if (locked) return;
+    const f = { id: uid(), name: newFolderName(), collapsed: false };
+    // New folder goes after the folder you're working in, otherwise at the end.
+    const cur = selectedFolderId || (cueById(selectedId) ? groupOf(cueById(selectedId)) : '');
+    const at = cur ? show.folders.findIndex(x => x.id === cur) + 1 : show.folders.length;
+    show.folders.splice(at, 0, f);
+    markDirty();
+    selectFolder(f.id);
+    renamingFolderId = f.id;
+    renderList();
+  }
+
+  function selectFolder(id) {
+    selectedFolderId = id;
+    selectedId = null;
+    $$('.cue-row.selected').forEach(r => r.classList.remove('selected'));
+    $$('.folder-row').forEach(r => r.classList.toggle('selected', r.dataset.folder === id));
+    renderInspector();
+  }
+
+  function setFolderCollapsed(id, v) {
+    const f = folderById(id);
+    if (!f || !!f.collapsed === v) return;
+    f.collapsed = v;
+    markDirty(); renderList();
+  }
+
+  function renameFolder(id, name) {
+    const f = folderById(id);
+    renamingFolderId = null;
+    if (f && name.trim() && name.trim() !== f.name) { f.name = name.trim(); markDirty(); }
+    renderList();
+    if (selectedFolderId === id) renderInspector();
+  }
+
+  function moveFolder(id, delta) {
+    if (locked) return;
+    const i = show.folders.findIndex(f => f.id === id);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= show.folders.length) return;
+    const [f] = show.folders.splice(i, 1);
+    show.folders.splice(j, 0, f);
+    normalizeFolders(); markDirty(); renderList();
+  }
+
+  function standbyFolder(id) {
+    const first = folderCues(id)[0];
+    if (!first) { toast('This folder has no cues yet', 'warn'); return; }
+    setStandby(indexOf(first.id), true);
+  }
+
+  async function deleteFolder(id) {
+    if (locked) return;
+    const f = folderById(id);
+    if (!f) return;
+    const inside = folderCues(id);
+    let keep = true;
+    if (inside.length) {
+      const r = await api.invoke('confirm', {
+        message: `Delete folder "${f.name}"?`,
+        detail: `It has ${inside.length} cue${inside.length === 1 ? '' : 's'}. "Keep cues" leaves them where they are in the list.`,
+        buttons: ['Keep cues', 'Delete cues too', 'Cancel']
+      });
+      if (r === 2 || r == null || r < 0) return;
+      keep = r === 0;
+    }
+    const fi = show.folders.indexOf(f);
+    // Kept cues join the group just above, so the running order doesn't change.
+    const above = fi > 0 ? show.folders[fi - 1].id : '';
+    if (keep) inside.forEach(c => { c.folderId = above; });
+    else {
+      const ids = new Set(inside.map(c => c.id));
+      const standbyId = show.cues[standby] && !ids.has(show.cues[standby].id) ? show.cues[standby].id : null;
+      const firstIdx = indexOf(inside[0].id);
+      show.cues = show.cues.filter(c => !ids.has(c.id));
+      standby = standbyId ? indexOf(standbyId) : Math.min(firstIdx, show.cues.length);
+      settings.midiMap = settings.midiMap.filter(m => !ids.has(m.cueId));
+      saveSettings();
+    }
+    show.folders.splice(fi, 1);
+    selectedFolderId = null;
+    normalizeFolders(); markDirty(); renderList(); renderInspector();
+  }
+
+  // Moves a cue into a folder ('' = no folder), before another cue or at the end.
+  function moveCueToFolder(id, folderId, beforeId) {
+    const c = cueById(id);
+    if (!c || locked) return;
+    const standbyId = show.cues[standby] ? show.cues[standby].id : null;
+    show.cues.splice(indexOf(id), 1);
+    c.folderId = folderId || '';
+    const at = beforeId ? indexOf(beforeId) : -1;
+    show.cues.splice(at >= 0 ? at : show.cues.length, 0, c);
+    if (standbyId) standby = indexOf(standbyId);
+    const f = folderById(c.folderId);
+    if (f) f.collapsed = false;
+    normalizeFolders(); markDirty(); renderList();
+  }
 
   function nextNumber() {
     let max = 0;
@@ -182,7 +318,8 @@
     const vol = (c.type === 'audio' || c.type === 'video') ? c.volume : '';
     const gain = vol !== '' && c.gain ? c.gain : 0;
     const isMissing = missing.has(c.id) || (hasFades && !c.file);
-    return `<div class="cue-row ${c.color ? 'c-' + c.color : ''} ${i === standby ? 'standby' : ''} ${c.id === selectedId ? 'selected' : ''} ${isMissing ? 'missing' : ''}"
+    const f = c.folderId ? folderById(c.folderId) : null;
+    return `<div class="cue-row ${c.color ? 'c-' + c.color : ''} ${i === standby ? 'standby' : ''} ${c.id === selectedId ? 'selected' : ''} ${isMissing ? 'missing' : ''} ${f ? 'in-folder' : ''} ${f && f.collapsed ? 'folded' : ''}"
         data-id="${c.id}" draggable="${!locked}">
       <div class="prog"></div>
       <div class="num">${esc(c.number)}</div>
@@ -197,11 +334,41 @@
     </div>`;
   }
 
+  function folderHTML(f) {
+    const n = folderCues(f.id).length;
+    const len = folderLength(f.id);
+    const name = renamingFolderId === f.id
+      ? `<input class="f-rename" value="${esc(f.name)}" spellcheck="false">`
+      : `<span class="f-name" title="Double-click to rename">${esc(f.name)}</span>`;
+    return `<div class="folder-row ${f.collapsed ? 'collapsed' : ''} ${f.id === selectedFolderId ? 'selected' : ''}" data-folder="${f.id}" draggable="${!locked}">
+      <button class="f-caret" data-fact="toggle" title="${f.collapsed ? 'Open' : 'Close'} folder">${f.collapsed ? '▸' : '▾'}</button>
+      ${name}
+      <span class="f-meta">${n} cue${n === 1 ? '' : 's'}${len ? ' · ' + fmt(len) : ''}</span>
+      <span class="f-standby">▶ standby inside</span>
+      <span class="f-spacer"></span>
+      <button class="f-btn" data-fact="standby" title="Put the first cue of this folder on standby">Standby</button>
+      <button class="f-btn edit" data-fact="rename" title="Rename folder">Rename</button>
+      <button class="f-btn edit" data-fact="up" title="Move folder up">↑</button>
+      <button class="f-btn edit" data-fact="down" title="Move folder down">↓</button>
+      <button class="f-btn edit danger" data-fact="delete" title="Delete folder">✕</button>
+    </div>`;
+  }
+
   function renderList() {
     const box = $('#cueRows');
-    box.innerHTML = show.cues.map(rowHTML).join('');
-    $('#emptyHint').style.display = show.cues.length ? 'none' : 'block';
-    $('#cueCount').textContent = `${show.cues.length} cue${show.cues.length === 1 ? '' : 's'}`;
+    normalizeFolders();
+    let h = '';
+    let i = 0;
+    groupIds().forEach(gid => {
+      if (gid) h += folderHTML(folderById(gid));
+      while (i < show.cues.length && groupOf(show.cues[i]) === gid) { h += rowHTML(show.cues[i], i); i++; }
+    });
+    box.innerHTML = h;
+    const nf = show.folders.length;
+    $('#emptyHint').style.display = show.cues.length || nf ? 'none' : 'block';
+    $('#cueCount').textContent = `${show.cues.length} cue${show.cues.length === 1 ? '' : 's'}${nf ? ` · ${nf} folder${nf === 1 ? '' : 's'}` : ''}`;
+    const ren = box.querySelector('.f-rename');
+    if (ren) { ren.focus(); ren.select(); }
     renderStandby();
     updatePlayingRows();
     renderMixer();
@@ -215,11 +382,15 @@
     $('#standbyNotes').textContent = c ? (c.notes || '') : '';
     $('#goBtn').disabled = !c;
     $$('.cue-row').forEach((r, i) => r.classList.toggle('standby', i === standby));
+    const sf = c && c.folderId;
+    $$('.folder-row').forEach(r => r.classList.toggle('has-standby', r.dataset.folder === sf));
     sendFeedback();
   }
 
   function scrollToRow(i) {
-    const r = $$('.cue-row')[i];
+    let r = $$('.cue-row')[i];
+    // A cue in a closed folder is hidden: show its folder instead.
+    if (r && r.classList.contains('folded')) r = $(`.folder-row[data-folder="${show.cues[i].folderId}"]`);
     if (r) r.scrollIntoView({ block: 'nearest' });
   }
 
@@ -232,6 +403,8 @@
 
   function select(id, rebuildList = true) {
     selectedId = id;
+    selectedFolderId = null;
+    $$('.folder-row.selected').forEach(r => r.classList.remove('selected'));
     $$('.cue-row').forEach(r => r.classList.toggle('selected', r.dataset.id === id));
     renderInspector();
     if (rebuildList) { /* rows already updated */ }
@@ -276,6 +449,17 @@
   function renderInspectorInner() {
     const box = $('#inspector');
     const c = cueById(selectedId);
+    const fo = !c && selectedFolderId ? folderById(selectedFolderId) : null;
+    if (fo) {
+      const n = folderCues(fo.id).length, len = folderLength(fo.id);
+      let h = `<h3><span class="tag folder">SET</span> Folder</h3>`;
+      h += fieldHTML('Name', `<input type="text" data-fkey="name" value="${esc(fo.name)}" spellcheck="false">`);
+      h += fieldHTML('Cues', `<span>${n}${len ? ` · running time ${fmt(len)}` : ''}</span>`);
+      h += `<div class="hint" style="margin:6px 0 0">Drag cues onto the folder bar to put them in it, or pick a folder in a cue's settings. Cues play straight through from one folder into the next.</div>`;
+      h += `<div class="insp-actions"><button class="ibtn allow-locked" data-fact="standby">Standby first cue</button><button class="ibtn" data-fact="delete">Delete folder</button></div>`;
+      box.innerHTML = h;
+      return;
+    }
     if (!c) {
       box.innerHTML = `<div class="insp-empty">Select a cue to edit it.<br><br>Drop media files onto the list, or use the Add buttons.</div>`;
       return;
@@ -284,6 +468,7 @@
     h += fieldHTML('Number', txt('number', c.number));
     h += fieldHTML('Name', txt('name', c.name, c.file ? api.basename(c.file) : ''));
     h += fieldHTML('Notes', `<textarea data-key="notes" spellcheck="true" placeholder="Shown under STANDBY">${esc(c.notes)}</textarea>`);
+    if (show.folders.length) h += fieldHTML('Folder', sel('folderId', c.folderId || '', [['', '(no folder)']].concat(show.folders.map(f => [f.id, f.name]))));
     h += fieldHTML('Colour', `<div class="colors">${COLORS.map(col => `<button data-color="${col}" class="${c.color === col ? 'sel' : ''}" style="background:${COLOR_HEX[col]}" title="${col || 'none'}"></button>`).join('')}</div>`);
 
     if (['audio', 'video', 'image'].includes(c.type)) {
@@ -378,9 +563,22 @@
 
   function onInspectorInput(e) {
     const el = e.target;
+    if (el.dataset.fkey === 'name' && !locked) {
+      const f = folderById(selectedFolderId);
+      if (!f) return;
+      f.name = el.value;
+      const n = $(`.folder-row[data-folder="${f.id}"] .f-name`);
+      if (n) n.textContent = f.name;
+      markDirty();
+      return;
+    }
     const key = el.dataset.key;
     const c = cueById(selectedId);
     if (!key || !c || locked) return;
+    if (key === 'folderId') {
+      if (e.type === 'change') { moveCueToFolder(c.id, el.value); select(c.id); scrollToRow(indexOf(c.id)); }
+      return;
+    }
     let v = el.type === 'checkbox' ? el.checked : el.value;
     if (el.dataset.kind === 'num') { v = parseFloat(v); if (isNaN(v)) v = 0; }
     c[key] = v;
@@ -409,6 +607,11 @@
   async function onInspectorClick(e) {
     const b = e.target.closest('button');
     if (!b) return;
+    if (b.dataset.fact && selectedFolderId) {
+      if (b.dataset.fact === 'standby') standbyFolder(selectedFolderId);
+      if (b.dataset.fact === 'delete') deleteFolder(selectedFolderId);
+      return;
+    }
     const c = cueById(selectedId);
     if (!c) return;
     if (b.dataset.color !== undefined) {
@@ -444,6 +647,7 @@
   // ------------------------------------------------------------------ editing
   function insertCue(c, at) {
     if (!c.number) c.number = nextNumber();
+    if (c.folderId === undefined) c.folderId = insertFolder();
     const pos = at == null ? show.cues.length : at;
     show.cues.splice(pos, 0, c);
     if (pos < standby) standby++;
@@ -451,7 +655,22 @@
     return c;
   }
 
+  // New cues go after the selected cue (in its folder), at the end of the
+  // selected folder, or at the end of the list.
+  function insertFolder() {
+    if (selectedFolderId && folderById(selectedFolderId)) return selectedFolderId;
+    const c = cueById(selectedId);
+    if (c) return groupOf(c);
+    return show.folders.length ? show.folders[show.folders.length - 1].id : '';
+  }
+
   function insertPos() {
+    if (selectedFolderId && folderById(selectedFolderId)) {
+      const r = groupRank(selectedFolderId);
+      let pos = 0;
+      show.cues.forEach((c, i) => { if (groupRank(groupOf(c)) <= r) pos = i + 1; });
+      return pos;
+    }
     const i = indexOf(selectedId);
     return i >= 0 ? i + 1 : show.cues.length;
   }
@@ -465,12 +684,17 @@
       return;
     }
     const c = insertCue(defaultsFor(type), insertPos());
+    const f = folderById(c.folderId);
+    if (f) f.collapsed = false;
     renderList(); select(c.id);
     scrollToRow(indexOf(c.id));
   }
 
   async function addFiles(paths, forceType) {
     let pos = insertPos();
+    const folderId = insertFolder();
+    const f = folderById(folderId);
+    if (f) f.collapsed = false;
     let last = null;
     let skipped = 0;
     for (const p of paths) {
@@ -478,6 +702,7 @@
       if (!type) { skipped++; continue; }
       const c = defaultsFor(type);
       c.file = p;
+      c.folderId = folderId;
       c.duration = await probeDuration(p, type);
       insertCue(c, pos++);
       last = c;
@@ -489,10 +714,21 @@
 
   function moveSelected(delta) {
     if (locked) return;
+    if (selectedFolderId) { moveFolder(selectedFolderId, delta); return; }
     const i = indexOf(selectedId);
-    const j = i + delta;
-    if (i < 0 || j < 0 || j >= show.cues.length) return;
-    moveCue(i, j);
+    if (i < 0) return;
+    const c = show.cues[i];
+    const nb = show.cues[i + delta];
+    if (nb && groupOf(nb) === groupOf(c)) { moveCue(i, i + delta); return; }
+    // At the edge of a folder: step into the folder above / below.
+    const groups = groupIds();
+    const g = groups.indexOf(groupOf(c)) + delta;
+    if (g < 0 || g >= groups.length) return;
+    c.folderId = groups[g];
+    const f = folderById(c.folderId);
+    if (f) f.collapsed = false;
+    normalizeFolders(); markDirty(); renderList();
+    scrollToRow(indexOf(c.id));
   }
 
   function moveCue(from, to) {
@@ -517,6 +753,7 @@
 
   async function deleteSelected() {
     if (locked) return;
+    if (selectedFolderId) { deleteFolder(selectedFolderId); return; }
     const c = cueById(selectedId);
     if (!c) return;
     const r = await api.invoke('confirm', { message: `Delete cue ${c.number} "${displayName(c)}"?`, buttons: ['Delete', 'Cancel'] });
@@ -1325,6 +1562,9 @@
     stopAll(0, true);
     show = Object.assign(newShow(), data);
     show.cues = data.cues.map(c => Object.assign(defaultsFor(c.type || 'audio'), c));
+    if (!Array.isArray(show.folders)) show.folders = [];
+    standby = 0;
+    normalizeFolders();
     showPath = p;
     missing.clear();
     const resolved = await api.invoke('resolve-media', { showPath: p, cues: show.cues });
@@ -1334,6 +1574,7 @@
     });
     standby = 0;
     selectedId = show.cues[0] ? show.cues[0].id : null;
+    selectedFolderId = null; renamingFolderId = null;
     dirty = false;
     api.send('set-dirty', false);
     $('#showName').value = show.name;
@@ -1347,7 +1588,7 @@
   async function newShowCmd() {
     if (!(await confirmDiscard())) return;
     stopAll(0, true);
-    show = newShow(); showPath = null; missing.clear(); standby = 0; selectedId = null;
+    show = newShow(); showPath = null; missing.clear(); standby = 0; selectedId = null; selectedFolderId = null;
     dirty = false; api.send('set-dirty', false);
     $('#showName').value = show.name;
     setMaster(100); renderList(); renderInspector(); updateTitle();
@@ -1373,7 +1614,7 @@
     b.classList.toggle('locked', v);
     b.innerHTML = `<i></i>${v ? 'Locked' : 'Edit'}`;
     $('#showName').readOnly = v;
-    $$('.cue-row').forEach(r => r.setAttribute('draggable', String(!v)));
+    $$('.cue-row, .folder-row').forEach(r => r.setAttribute('draggable', String(!v)));
     if (wave) wave.refresh();
   }
 
@@ -1418,6 +1659,7 @@
   $('#downBtn').addEventListener('click', blurAfter(() => moveSelected(1)));
   $('#dupBtn').addEventListener('click', blurAfter(duplicateSelected));
   $('#delBtn').addEventListener('click', blurAfter(deleteSelected));
+  $('#folderBtn').addEventListener('click', blurAfter(addFolder));
   $$('.add').forEach(b => b.addEventListener('click', blurAfter(() => addCue(b.dataset.type))));
   $('#masterVol').addEventListener('input', (e) => { setMaster(parseFloat(e.target.value)); markDirty(); });
   $('#masterVol').addEventListener('change', (e) => e.target.blur());
@@ -1432,13 +1674,47 @@
   // cue list clicks
   const rows = $('#cueRows');
   rows.addEventListener('mousedown', (e) => {
+    const fr = e.target.closest('.folder-row');
+    if (fr) {
+      if (e.target.closest('button, input')) return;
+      selectFolder(fr.dataset.folder);
+      return;
+    }
     const r = e.target.closest('.cue-row');
     if (!r) return;
     const i = indexOf(r.dataset.id);
     select(r.dataset.id);
     setStandby(i);
   });
+  rows.addEventListener('click', (e) => {
+    const b = e.target.closest('.folder-row button');
+    if (!b) return;
+    const id = b.closest('.folder-row').dataset.folder;
+    b.blur();
+    switch (b.dataset.fact) {
+      case 'toggle': setFolderCollapsed(id, !folderById(id).collapsed); break;
+      case 'standby': standbyFolder(id); break;
+      case 'rename': if (!locked) { renamingFolderId = id; renderList(); } break;
+      case 'up': moveFolder(id, -1); break;
+      case 'down': moveFolder(id, 1); break;
+      case 'delete': deleteFolder(id); break;
+    }
+  });
+  rows.addEventListener('keydown', (e) => {
+    if (!e.target.classList.contains('f-rename')) return;
+    if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); renamingFolderId = null; renderList(); }
+  });
+  rows.addEventListener('focusout', (e) => {
+    if (!e.target.classList.contains('f-rename') || renamingFolderId == null) return;
+    renameFolder(e.target.closest('.folder-row').dataset.folder, e.target.value);
+  });
   rows.addEventListener('dblclick', (e) => {
+    const fr = e.target.closest('.folder-row');
+    if (fr) {
+      if (!locked && e.target.closest('.f-name')) { renamingFolderId = fr.dataset.folder; renderList(); }
+      return;
+    }
     const r = e.target.closest('.cue-row');
     if (!r || locked) return;
     const n = insp.querySelector('[data-key="name"]');
@@ -1447,7 +1723,16 @@
 
   // drag to reorder
   let dragId = null;
+  let dragFolder = null;
+  const clearDragMarks = () => $$('.cue-row.dragover, .folder-row.dragover').forEach(x => x.classList.remove('dragover'));
   rows.addEventListener('dragstart', (e) => {
+    const fr = e.target.closest('.folder-row');
+    if (fr && !locked && !e.target.closest('input')) {
+      dragFolder = fr.dataset.folder;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/x-folder', dragFolder);
+      return;
+    }
     const r = e.target.closest('.cue-row');
     if (!r || locked) { e.preventDefault(); return; }
     dragId = r.dataset.id;
@@ -1455,26 +1740,44 @@
     e.dataTransfer.setData('text/x-cue', dragId);
   });
   rows.addEventListener('dragover', (e) => {
-    if (!dragId) return;
+    if (!dragId && !dragFolder) return;
     e.preventDefault();
-    $$('.cue-row.dragover').forEach(x => x.classList.remove('dragover'));
-    const r = e.target.closest('.cue-row');
+    clearDragMarks();
+    const r = e.target.closest(dragFolder ? '.folder-row' : '.cue-row, .folder-row');
     if (r) r.classList.add('dragover');
   });
   rows.addEventListener('drop', (e) => {
-    if (!dragId) return;
+    if (!dragId && !dragFolder) return;
     e.preventDefault();
     e.stopPropagation();
+    clearDragMarks();
+    const fr = e.target.closest('.folder-row');
+    if (dragFolder) {
+      // Dropping a folder onto another folder places it before that one; empty space = end.
+      const id = dragFolder; dragFolder = null;
+      const from = show.folders.findIndex(f => f.id === id);
+      const [f] = show.folders.splice(from, 1);
+      const at = fr ? show.folders.findIndex(x => x.id === fr.dataset.folder) : -1;
+      show.folders.splice(at >= 0 ? at : show.folders.length, 0, f);
+      normalizeFolders(); markDirty(); renderList();
+      return;
+    }
+    const id = dragId; dragId = null;
+    // Dropping onto a folder bar puts the cue at the end of that folder.
+    if (fr) { moveCueToFolder(id, fr.dataset.folder); return; }
     const r = e.target.closest('.cue-row');
-    const from = indexOf(dragId);
+    if (r) {
+      const t = cueById(r.dataset.id);
+      if (groupOf(t) !== groupOf(cueById(id))) { moveCueToFolder(id, groupOf(t), t.id); return; }
+    }
+    const from = indexOf(id);
     // Dropping onto a row places the cue before that row; empty space = end of list.
+    if (!r && show.folders.length) { moveCueToFolder(id, show.folders[show.folders.length - 1].id); return; }
     const before = r ? indexOf(r.dataset.id) : show.cues.length;
     const to = Math.min(show.cues.length - 1, before > from ? before - 1 : before);
-    dragId = null;
-    $$('.cue-row.dragover').forEach(x => x.classList.remove('dragover'));
     if (from >= 0) moveCue(from, Math.max(0, to));
   });
-  rows.addEventListener('dragend', () => { dragId = null; $$('.cue-row.dragover').forEach(x => x.classList.remove('dragover')); });
+  rows.addEventListener('dragend', () => { dragId = null; dragFolder = null; clearDragMarks(); });
 
   // file drop from Explorer
   const list = $('#cuelist');

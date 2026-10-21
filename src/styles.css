@@ -131,6 +131,29 @@ main { display: grid; grid-template-columns: 1fr 340px; min-height: 0; }
 .cue-row .prog { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: rgba(39,207,109,.16); z-index: 0; pointer-events: none; }
 .cue-row .prog::after { content: ""; position: absolute; right: 0; top: 0; bottom: 0; width: 2px; background: var(--go-hi); }
 
+/* folders (sets) */
+.folder-row { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px 0 6px; background: #1a2130;
+  border-bottom: 1px solid var(--line); border-top: 1px solid var(--line); border-left: 4px solid var(--accent); cursor: default; user-select: none; }
+.folder-row:hover { background: #1d2638; }
+.folder-row.selected { background: #24324b; }
+.folder-row.dragover { box-shadow: inset 0 0 0 2px var(--accent); }
+.folder-row .f-caret { background: none; border: 0; color: var(--muted); width: 22px; font-size: 13px; padding: 0; }
+.folder-row .f-caret:hover { color: var(--text); }
+.folder-row .f-name { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 40px; }
+.folder-row .f-rename { background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; padding: 2px 6px; font-weight: 700; width: 220px; outline: none; }
+.folder-row .f-meta { color: var(--muted); font-size: 12px; font-family: var(--mono); white-space: nowrap; }
+.folder-row .f-standby { display: none; color: var(--go-hi); font-size: 11px; font-weight: 700; letter-spacing: 1px; white-space: nowrap; }
+.folder-row.collapsed.has-standby { background: var(--standby); }
+.folder-row.collapsed.has-standby .f-standby { display: inline; }
+.folder-row .f-spacer { flex: 1; }
+.folder-row .f-btn { background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 2px 8px; font-size: 12px; color: var(--muted); }
+.folder-row .f-btn:hover { border-color: var(--accent); color: var(--text); }
+.folder-row .f-btn.danger:hover { border-color: var(--stop); color: #ff8b75; }
+body.locked .folder-row .edit { display: none; }
+.cue-row.in-folder .num { padding-left: 14px; }
+.cue-row.folded { display: none; }
+.tag.folder { background: #1d2f4d; color: #8cc4ff; }
+
 .tag { display: inline-block; font: 700 10px var(--mono); padding: 2px 6px; border-radius: 4px; letter-spacing: .5px; }
 .tag.audio { background: #19324d; color: #7fc0ff; }
 .tag.video { background: #3b2350; color: #d39cff; }
