@@ -3,6 +3,7 @@ const { app, BrowserWindow, ipcMain, dialog, Menu, screen, protocol, session, sh
 const path = require('path');
 const fs = require('fs');
 const dgram = require('dgram');
+const http = require('http');
 const { Readable } = require('stream');
 const osc = require('./osc');
 const { createUpdater } = require('./updater');
@@ -212,6 +213,49 @@ function stopOsc() {
 }
 
 // ---------------------------------------------------------------------------
+// Web control — plain HTTP GETs (e.g. a Stream Deck "Website" button) turned
+// into the same commands as OSC: http://localhost:53000/cue/3 = /showcue/cue 3
+// ---------------------------------------------------------------------------
+let httpServer = null;
+const HTTP_ALIASES = { stop: 'stopall', pause: 'pauseall', resume: 'resumeall' };
+
+function httpCommand(url) {
+  let path0;
+  try { path0 = decodeURIComponent(url.split('?')[0]); } catch (e) { return null; }
+  const parts = path0.split('/').filter(Boolean);
+  if (parts[0] && /^(showcue|mix16showcue)$/i.test(parts[0])) parts.shift();
+  if (!parts.length) return null;
+  const cmd = parts[0].toLowerCase();
+  const args = parts.slice(1, 2).map(a => (a !== '' && !isNaN(a) ? Number(a) : a));
+  return { address: '/showcue/' + (HTTP_ALIASES[cmd] || cmd), args };
+}
+
+function startHttp(port) {
+  return new Promise((resolve) => {
+    stopHttp();
+    if (!port) return resolve({ ok: false, error: 'No port' });
+    const srv = http.createServer((req, res) => {
+      const m = req.url === '/favicon.ico' ? null : httpCommand(req.url || '/');
+      if (m) sendToMain('osc-in', { ...m, from: 'http' });
+      res.writeHead(m ? 200 : 404, { 'Content-Type': 'text/plain; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+      res.end(m ? `OK ${m.address} ${m.args.join(' ')}`.trim() : 'Unique AV Show Cue: try /go, /cue/3, /stop');
+    });
+    let settled = false;
+    srv.on('error', (err) => {
+      if (!settled) { settled = true; resolve({ ok: false, error: err.message }); }
+      if (httpServer === srv) httpServer = null;
+    });
+    srv.listen(port, '127.0.0.1', () => {
+      httpServer = srv;
+      if (!settled) { settled = true; resolve({ ok: true, port }); }
+    });
+  });
+}
+function stopHttp() {
+  if (httpServer) { try { httpServer.close(); } catch (e) {} httpServer = null; }
+}
+
+// ---------------------------------------------------------------------------
 // Show files
 // ---------------------------------------------------------------------------
 const SHOW_FILTER = [{ name: 'Show Cue file', extensions: ['showcue'] }, { name: 'All files', extensions: ['*'] }];
@@ -310,6 +354,8 @@ ipcMain.handle('confirm', async (_e, { message, detail, buttons }) => {
 ipcMain.handle('get-displays', () => displayList());
 ipcMain.handle('osc-start', (_e, port) => startOsc(port));
 ipcMain.handle('osc-stop', () => { stopOsc(); return { ok: true }; });
+ipcMain.handle('http-start', (_e, port) => startHttp(port));
+ipcMain.handle('http-stop', () => { stopHttp(); return { ok: true }; });
 ipcMain.on('osc-send', (_e, { host, port, address, args }) => {
   try {
     const buf = osc.encode(address, args || []);
@@ -451,5 +497,5 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('window-all-closed', () => app.quit());
-  app.on('before-quit', () => { stopOsc(); try { oscOut.close(); } catch (e) {} });
+  app.on('before-quit', () => { stopOsc(); stopHttp(); try { oscOut.close(); } catch (e) {} });
 }
