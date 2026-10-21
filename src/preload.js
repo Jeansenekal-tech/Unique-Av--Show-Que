@@ -2,7 +2,7 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 const path = require('path');
 
-const INVOKE = ['show-open-dialog', 'show-save', 'resolve-media', 'pick-media', 'confirm', 'get-displays', 'osc-start', 'osc-stop', 'get-version', 'update-check', 'update-install'];
+const INVOKE = ['show-open-dialog', 'show-save', 'resolve-media', 'pick-media', 'confirm', 'get-displays', 'osc-start', 'osc-stop', 'http-start', 'http-stop', 'get-version', 'update-check', 'update-install'];
 const SEND = ['osc-send', 'output-cmd', 'output-open', 'output-close', 'output-event', 'set-dirty', 'set-title', 'quit-now', 'update-config'];
 const ON = ['menu', 'show-opened', 'osc-in', 'output-event', 'output-state', 'output-cmd', 'displays-changed', 'toast', 'update-status'];
 

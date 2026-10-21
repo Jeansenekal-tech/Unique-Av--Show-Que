@@ -172,6 +172,16 @@
           <tr><td><code>/showcue/master &lt;0-100&gt;</code></td><td>Master volume</td></tr>
         </table>
         <p class="muted">MiX16-style addresses (<code>/mix16showcue/go</code> etc.) are accepted too. Cue numbers match the # column; if none matches, the number is used as a position in the list.</p>
+        <h3>Stream Deck / web (http://localhost:53000)</h3>
+        <table>
+          <tr><td><code>/go</code> · <code>/go/&lt;n&gt;</code></td><td>GO · standby cue n and GO</td></tr>
+          <tr><td><code>/cue/&lt;n&gt;</code></td><td>Fire cue n without moving standby</td></tr>
+          <tr><td><code>/standby/&lt;n&gt;</code> · <code>/next</code> · <code>/prev</code></td><td>Move standby</td></tr>
+          <tr><td><code>/stop</code> · <code>/panic</code></td><td>Stop all with fade / immediately</td></tr>
+          <tr><td><code>/pause</code> · <code>/resume</code></td><td>Pause / resume</td></tr>
+          <tr><td><code>/master/&lt;0-100&gt;</code></td><td>Master volume</td></tr>
+        </table>
+        <p class="muted">Stream Deck: use the <b>Website</b> action, paste e.g. <code>http://localhost:53000/cue/3</code> and tick <b>Access in background</b>.</p>
         <h3>Feedback</h3>
         <p class="muted">When a feedback host is set, the app sends <code>/showcue/standby &lt;number&gt; &lt;name&gt;</code> every time the standby cue changes.</p>
       </div>

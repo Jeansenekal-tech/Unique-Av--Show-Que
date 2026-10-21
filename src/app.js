@@ -48,6 +48,7 @@
   let midiLearn = null;
   const ccLast = {};
   let oscStatus = { ok: false };
+  let httpStatus = { ok: false };
   let settings = loadSettings();
   let wave = null;
   let upd = { state: 'idle' };
@@ -63,6 +64,7 @@
     const def = {
       outputDisplay: null, defaultDevice: '', stopFade: 2, goProtect: 300,
       oscEnabled: true, oscPort: 53000, fbHost: '', fbPort: 53001,
+      httpEnabled: true, httpPort: 53000,
       midiInput: 'all', midiMap: [], autoUpdate: true
     };
     try { return Object.assign(def, JSON.parse(localStorage.getItem('showcue.settings') || '{}')); } catch (e) { return def; }
@@ -1290,12 +1292,13 @@
     let a = (m.address || '').toLowerCase();
     a = a.replace(/^\/(showcue|mix16showcue|mix16apps\/playlist|mix16apps)\//, '');
     const arg = m.args && m.args.length ? m.args[0] : undefined;
+    const noCue = () => toast(`${m.from === 'http' ? 'Stream Deck' : 'OSC'}: no cue ${arg}`, 'warn');
     switch (a) {
       case 'go':
-        if (arg !== undefined && typeof arg !== 'boolean') { const i = findCueByNumber(arg); if (i < 0) return toast(`OSC: no cue ${arg}`, 'warn'); setStandby(i, true); }
+        if (arg !== undefined && typeof arg !== 'boolean') { const i = findCueByNumber(arg); if (i < 0) return noCue(); setStandby(i, true); }
         go(); break;
-      case 'cue': case 'fire': { const i = findCueByNumber(arg); if (i >= 0) fire(show.cues[i], true); break; }
-      case 'setgo': case 'standby': case 'set/go': { const i = findCueByNumber(arg); if (i >= 0) setStandby(i, true); break; }
+      case 'cue': case 'fire': { const i = findCueByNumber(arg); if (i >= 0) fire(show.cues[i], true); else noCue(); break; }
+      case 'setgo': case 'standby': case 'set/go': { const i = findCueByNumber(arg); if (i >= 0) setStandby(i, true); else noCue(); break; }
       case 'next': case 'setnext': case 'set/next': setStandby(standby + 1, true); break;
       case 'prev': case 'setprev': case 'set/prev': setStandby(standby - 1, true); break;
       case 'playnext': go(); break;
@@ -1327,6 +1330,12 @@
     pill.classList.toggle('err', !oscStatus.ok && !oscStatus.off);
     pill.title = oscStatus.ok ? `OSC listening on UDP ${settings.oscPort}` : oscStatus.off ? 'OSC input off' : `OSC error: ${oscStatus.error}`;
     if (!oscStatus.ok && !oscStatus.off) toast(`OSC could not listen on port ${settings.oscPort}: ${oscStatus.error}`, 'warn');
+  }
+
+  async function applyHttp() {
+    if (settings.httpEnabled) httpStatus = await api.invoke('http-start', settings.httpPort);
+    else { await api.invoke('http-stop'); httpStatus = { ok: false, off: true }; }
+    if (!httpStatus.ok && !httpStatus.off) toast(`Web control could not use port ${settings.httpPort}: ${httpStatus.error}`, 'warn');
   }
 
   // ------------------------------------------------------------------ MIDI
@@ -1461,6 +1470,12 @@
         <label>Status</label><span class="${oscStatus.ok ? '' : 'muted'}">${oscStatus.ok ? `Listening on port ${settings.oscPort}` : oscStatus.off ? 'Off' : `Not listening: ${esc(oscStatus.error || '')}`}</span>
         <label>Feedback to</label><div class="row"><input type="text" id="sFbHost" placeholder="IP address (blank = off)" value="${esc(settings.fbHost)}"><input type="number" id="sFbPort" style="width:90px" value="${settings.fbPort}"></div>
       </div>
+      <h3>Stream Deck / web control</h3>
+      <div class="settings-grid">
+        <label>Web control</label><label class="row" style="color:var(--text)"><input type="checkbox" id="sHttpOn" ${settings.httpEnabled ? 'checked' : ''}> Accept commands on port <input type="number" id="sHttpPort" style="width:90px" min="1" max="65535" value="${settings.httpPort}"></label>
+        <label>Status</label><span class="${httpStatus.ok ? '' : 'muted'}">${httpStatus.ok ? `On: http://localhost:${settings.httpPort}/go` : httpStatus.off ? 'Off' : `Not working: ${esc(httpStatus.error || '')}`}</span>
+      </div>
+      <p class="muted">On a Stream Deck, use the <b>Website</b> action with <b>Access in background</b> ticked. Addresses: <code>/go</code>, <code>/cue/3</code> (play cue 3), <code>/go/3</code>, <code>/stop</code>, <code>/panic</code>, <code>/pause</code>, <code>/resume</code>, <code>/next</code>, <code>/prev</code>, <code>/master/80</code>. Only this computer can send them.</p>
       <h3>MIDI control</h3>
       <div class="settings-grid">
         <label>Listen to</label>
@@ -1500,6 +1515,8 @@
       case 'sGoProt': settings.goProtect = Math.max(0, parseInt(t.value, 10) || 0); break;
       case 'sOscOn': settings.oscEnabled = t.checked; saveSettings(); await applyOsc(); renderSettings(); return;
       case 'sOscPort': settings.oscPort = parseInt(t.value, 10) || 53000; saveSettings(); await applyOsc(); renderSettings(); return;
+      case 'sHttpOn': settings.httpEnabled = t.checked; saveSettings(); await applyHttp(); renderSettings(); return;
+      case 'sHttpPort': settings.httpPort = parseInt(t.value, 10) || 53000; saveSettings(); await applyHttp(); renderSettings(); return;
       case 'sFbHost': settings.fbHost = t.value.trim(); lastFb = null; sendFeedback(); break;
       case 'sFbPort': settings.fbPort = parseInt(t.value, 10) || 53001; lastFb = null; sendFeedback(); break;
       case 'sMidiIn': settings.midiInput = t.value; bindMidi(); updateMidiPill(); break;
@@ -1941,6 +1958,7 @@
     renderMixer(true);
     initMidi();
     applyOsc();
+    applyHttp();
     try { appVersion = await api.invoke('get-version'); } catch (e) {}
     api.send('update-config', { auto: settings.autoUpdate });
   })();

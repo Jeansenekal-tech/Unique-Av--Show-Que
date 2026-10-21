@@ -10,6 +10,7 @@ Show playback for theatre and live events, in the spirit of MiX16 GO — for Win
 - **MIDI control** – learn any note/CC/program change for GO, Stop All, Panic, Pause, Prev/Next, a master-volume fader, or to fire a specific cue
 - **Master meter** – a stereo peak meter next to the master fader shows the audio level going out of every output (audio cues and video sound), with peak hold and a clip warning (click the dB readout to reset it)
 - **Mixer** – next to the Playing list, one strip per audio output (the default output plus every interface your cues use) with a level meter, a fader in dB and a mute button, plus a Master strip. Mixer settings are saved with the show
+- **Stream Deck / web control** – each Stream Deck button can play a song, GO, stop and more, using the Stream Deck's built-in *Website* action (no plugin needed)
 - **OSC control** – UDP port 53000 by default; also accepts MiX16-style addresses; optional standby feedback
 - **Show files** (`.showcue`) – save/load, double-click to open; media paths are also stored relative to the show file so a show folder can be moved to another PC
 - **Show lock**, Pause/Resume All, Stop All with fade, Panic, double-GO protection, live clock and remaining-time counters
@@ -87,6 +88,30 @@ npm run dist:mac   # on a Mac: build the Apple Silicon DMG into dist/
 | `/showcue/master 0-100` | Master volume |
 
 `/mix16showcue/...` equivalents also work. With a feedback host set, the app sends `/showcue/standby <number> <name>` when standby changes.
+
+### Stream Deck
+
+The app listens on this computer for simple web addresses (turn it off or change the port in **Settings → Stream Deck / web control**). To make a button that plays a song:
+
+1. Note the song's number in the app's **#** column (say it is 3).
+2. In the Stream Deck app, drag **System → Website** onto a key.
+3. In the URL box type `http://localhost:53000/cue/3`.
+4. Tick **Access in background** (otherwise a browser window opens every time).
+5. Give the key a title, e.g. the song name. Press it: cue 3 plays.
+
+Repeat for each song. Other useful keys:
+
+| URL | Action |
+|---|---|
+| `http://localhost:53000/go` | GO (fire the standby cue) |
+| `http://localhost:53000/cue/3` | Play cue 3 without moving standby |
+| `http://localhost:53000/go/3` | Jump standby to cue 3 and GO |
+| `http://localhost:53000/standby/3` · `/next` · `/prev` | Move standby |
+| `http://localhost:53000/stop` · `/panic` | Stop all with fade / immediately |
+| `http://localhost:53000/pause` · `/resume` | Pause / resume all |
+| `http://localhost:53000/master/80` | Master volume to 80 |
+
+The Stream Deck must be plugged into the same computer as the app, and the app must be open (it doesn't need to be the front window). The buttons follow cue numbers, so if you renumber cues, update the keys. Space, Esc and P also work through the Stream Deck *Hotkey* action, but only while the app is the front window.
 
 ### Supported media
 
