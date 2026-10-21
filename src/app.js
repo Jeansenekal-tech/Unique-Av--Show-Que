@@ -1055,12 +1055,13 @@
     let a = (m.address || '').toLowerCase();
     a = a.replace(/^\/(showcue|mix16showcue|mix16apps\/playlist|mix16apps)\//, '');
     const arg = m.args && m.args.length ? m.args[0] : undefined;
+    const noCue = () => toast(`${m.from === 'http' ? 'Stream Deck' : 'OSC'}: no cue ${arg}`, 'warn');
     switch (a) {
       case 'go':
-        if (arg !== undefined && typeof arg !== 'boolean') { const i = findCueByNumber(arg); if (i < 0) return toast(`OSC: no cue ${arg}`, 'warn'); setStandby(i, true); }
+        if (arg !== undefined && typeof arg !== 'boolean') { const i = findCueByNumber(arg); if (i < 0) return noCue(); setStandby(i, true); }
         go(); break;
-      case 'cue': case 'fire': { const i = findCueByNumber(arg); if (i >= 0) fire(show.cues[i], true); break; }
-      case 'setgo': case 'standby': case 'set/go': { const i = findCueByNumber(arg); if (i >= 0) setStandby(i, true); break; }
+      case 'cue': case 'fire': { const i = findCueByNumber(arg); if (i >= 0) fire(show.cues[i], true); else noCue(); break; }
+      case 'setgo': case 'standby': case 'set/go': { const i = findCueByNumber(arg); if (i >= 0) setStandby(i, true); else noCue(); break; }
       case 'next': case 'setnext': case 'set/next': setStandby(standby + 1, true); break;
       case 'prev': case 'setprev': case 'set/prev': setStandby(standby - 1, true); break;
       case 'playnext': go(); break;

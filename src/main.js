@@ -218,6 +218,8 @@ function stopOsc() {
 // ---------------------------------------------------------------------------
 let httpServer = null;
 const HTTP_ALIASES = { stop: 'stopall', pause: 'pauseall', resume: 'resumeall' };
+const HTTP_NEEDS_ARG = ['cue', 'fire', 'setgo', 'standby', 'master'];
+const HTTP_NO_ARG = ['go', 'next', 'prev', 'playnext', 'stopall', 'panic', 'pauseall', 'resumeall'];
 
 function httpCommand(url) {
   let path0;
@@ -225,9 +227,11 @@ function httpCommand(url) {
   const parts = path0.split('/').filter(Boolean);
   if (parts[0] && /^(showcue|mix16showcue)$/i.test(parts[0])) parts.shift();
   if (!parts.length) return null;
-  const cmd = parts[0].toLowerCase();
+  const cmd = HTTP_ALIASES[parts[0].toLowerCase()] || parts[0].toLowerCase();
   const args = parts.slice(1, 2).map(a => (a !== '' && !isNaN(a) ? Number(a) : a));
-  return { address: '/showcue/' + (HTTP_ALIASES[cmd] || cmd), args };
+  if (HTTP_NEEDS_ARG.includes(cmd) ? !args.length : !HTTP_NO_ARG.includes(cmd)) return null;
+  if (cmd === 'master' && typeof args[0] !== 'number') return null;
+  return { address: '/showcue/' + cmd, args };
 }
 
 function startHttp(port) {
@@ -238,7 +242,7 @@ function startHttp(port) {
       const m = req.url === '/favicon.ico' ? null : httpCommand(req.url || '/');
       if (m) sendToMain('osc-in', { ...m, from: 'http' });
       res.writeHead(m ? 200 : 404, { 'Content-Type': 'text/plain; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
-      res.end(m ? `OK ${m.address} ${m.args.join(' ')}`.trim() : 'Unique AV Show Cue: try /go, /cue/3, /stop');
+      res.end(m ? `OK ${m.address} ${m.args.join(' ')}`.trim() : 'Unknown address. Try /go, /cue/3, /stop, /panic, /pause, /resume, /next, /prev, /standby/3, /master/80');
     });
     let settled = false;
     srv.on('error', (err) => {
