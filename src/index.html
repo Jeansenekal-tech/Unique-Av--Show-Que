@@ -52,8 +52,10 @@
     <button class="add" data-type="osc">OSC</button>
     <button class="add" data-type="midi">MIDI</button>
     <div class="sep"></div>
-    <button id="upBtn" class="edit" title="Move cue up">↑</button>
-    <button id="downBtn" class="edit" title="Move cue down">↓</button>
+    <button id="folderBtn" class="edit" title="New folder: group cues into a set. Drag cues onto its bar to fill it.">+ Folder</button>
+    <div class="sep"></div>
+    <button id="upBtn" class="edit" title="Move cue (or folder) up">↑</button>
+    <button id="downBtn" class="edit" title="Move cue (or folder) down">↓</button>
     <button id="dupBtn" class="edit" title="Duplicate cue (Ctrl+D)">Duplicate</button>
     <button id="delBtn" class="edit danger" title="Delete cue (Del)">Delete</button>
     <div class="spacer"></div>
@@ -141,6 +143,14 @@
           <tr><td><kbd>Del</kbd></td><td>Delete selected cue (edit mode)</td></tr>
           <tr><td><kbd>Ctrl</kbd>+<kbd>L</kbd></td><td>Lock / unlock the show</td></tr>
         </table>
+        <h3>Folders</h3>
+        <table>
+          <tr><td>+ Folder</td><td>Make a new folder (set) after the one you're in</td></tr>
+          <tr><td>Drag a cue onto a folder bar</td><td>Put the cue in that folder</td></tr>
+          <tr><td>▾ / ▸ on the folder bar</td><td>Close / open the folder</td></tr>
+          <tr><td>Double-click the folder name</td><td>Rename it</td></tr>
+        </table>
+        <p class="muted">GO runs straight through: when one folder's last cue has played, the next folder's first cue is on standby.</p>
         <h3>Waveform (click it first)</h3>
         <table>
           <tr><td>Drag green / red marker</td><td>Move the IN / OUT point</td></tr>
