@@ -63,7 +63,7 @@
 
   function loadSettings() {
     const def = {
-      outputDisplay: null, defaultDevice: '', stopFade: 2, goProtect: 300,
+      outputDisplay: null, defaultDevice: '', defaultRoute: '1-2', stopFade: 2, goProtect: 300,
       oscEnabled: true, oscPort: 53000, fbHost: '', fbPort: 53001,
       httpEnabled: true, httpPort: 53000,
       midiInput: 'all', midiMap: [], autoUpdate: true,
@@ -76,8 +76,8 @@
   function defaultsFor(type) {
     const base = { id: uid(), number: '', name: '', type, notes: '', color: '', follow: 'off', followDelay: 0 };
     switch (type) {
-      case 'audio': return { ...base, file: '', volume: 100, fadeIn: 0, fadeOut: 2, startAt: 0, endAt: 0, loop: false, fadeAtEnd: false, device: settings.defaultDevice || '', route: '1-2', duration: 0 };
-      case 'video': return { ...base, file: '', volume: 100, fadeIn: 0, fadeOut: 1, startAt: 0, endAt: 0, loop: false, fadeAtEnd: false, device: settings.defaultDevice || '', route: '1-2', fit: 'contain', replace: true, holdLast: false, duration: 0 };
+      case 'audio': return { ...base, file: '', volume: 100, fadeIn: 0, fadeOut: 2, startAt: 0, endAt: 0, loop: false, fadeAtEnd: false, device: settings.defaultDevice || '', route: settings.defaultRoute || '1-2', duration: 0 };
+      case 'video': return { ...base, file: '', volume: 100, fadeIn: 0, fadeOut: 1, startAt: 0, endAt: 0, loop: false, fadeAtEnd: false, device: settings.defaultDevice || '', route: settings.defaultRoute || '1-2', fit: 'contain', replace: true, holdLast: false, duration: 0 };
       case 'image': return { ...base, file: '', fadeIn: 1, fadeOut: 1, hold: 0, fit: 'contain', replace: true };
       case 'stop': return { ...base, name: 'Stop all', target: 'all', fade: 2 };
       case 'black': return { ...base, name: 'Black screen', fade: 1 };
@@ -628,8 +628,13 @@
       h += `</div>`;
       if (c.type !== 'image') {
         h += `<div class="group"><div class="group-title">Audio output</div>`;
-        h += fieldHTML('Device', sel('device', c.device, deviceOptions(c.device)));
+        const hidden = namesHidden();
+        h += fieldHTML('Device', sel('device', c.device, deviceOptions(c.device)), hidden ? `Device names are hidden. <button class="ibtn" data-act="unlock">Show device names</button>` : '');
         h += fieldHTML('Channels', `<select data-key="route" id="routeSel"></select>`, `<span id="chHint"></span>`);
+        const inFolder = c.folderId && folderById(c.folderId);
+        h += `<div class="insp-actions"><button class="ibtn" data-act="tone" title="Plays a short beep on this output and these channels">🔊 Test output</button>`;
+        if (inFolder) h += `<button class="ibtn" data-act="routeFolder" title="Give every audio and video cue in this folder the same output and channels">Use for this folder</button>`;
+        h += `<button class="ibtn" data-act="routeAll" title="Give every audio and video cue in the show the same output and channels">Use for all cues</button></div>`;
         h += `</div>`;
       }
     }
@@ -682,15 +687,45 @@
     if (c.type === 'audio' || c.type === 'video') fillRoutes(c);
   }
 
+  const namesHidden = () => {
+    const devs = AR.devices.filter(d => d.deviceId !== 'default');
+    return devs.length > 0 && devs.every(d => !d.label);
+  };
+
+  // Fills a channel picker with the pairs and single outputs the device has.
+  async function fillRouteSelect(selEl, hint, device, route) {
+    const n = await AR.channelCount(device);
+    const opts = AR.routeOptions(n || 2);
+    if (route && !opts.some(o => o.value === route)) opts.push({ value: route, label: `${route} (not on this device)` });
+    selEl.innerHTML = opts.map(o => `<option value="${o.value}" ${o.value === (route || '1-2') ? 'selected' : ''}>${o.label}</option>`).join('');
+    if (hint) hint.textContent = n ? `This output has ${n} channel${n === 1 ? '' : 's'}` : 'Device not connected';
+  }
+
   async function fillRoutes(c) {
     const selEl = $('#routeSel');
-    if (!selEl) return;
-    const n = await AR.channelCount(c.device);
-    const opts = AR.routeOptions(n || 2);
-    if (c.route && !opts.some(o => o.value === c.route)) opts.push({ value: c.route, label: `${c.route} (not on this device)` });
-    selEl.innerHTML = opts.map(o => `<option value="${o.value}" ${o.value === (c.route || '1-2') ? 'selected' : ''}>${o.label}</option>`).join('');
-    const hint = $('#chHint');
-    if (hint) hint.textContent = n ? `This output has ${n} channel${n === 1 ? '' : 's'}` : 'Device not connected';
+    if (selEl) await fillRouteSelect(selEl, $('#chHint'), c.device, c.route);
+  }
+
+  // Copies a cue's output and channels to other audio/video cues.
+  async function copyRoute(c, cues, where) {
+    if (locked) return;
+    const targets = cues.filter(x => x.id !== c.id && (x.type === 'audio' || x.type === 'video'));
+    if (!targets.length) { toast(`No other audio or video cues ${where}.`); return; }
+    const dev = c.device || 'Default output';
+    const r = await api.invoke('confirm', {
+      message: `Send ${targets.length} cue${targets.length === 1 ? '' : 's'} ${where} to "${dev}", ${routeText(c.route)}?`,
+      detail: 'Each cue keeps its own volume and fades. Only the output and channels change.',
+      buttons: ['Change them', 'Cancel']
+    });
+    if (r !== 0) return;
+    targets.forEach(x => { x.device = c.device || ''; x.route = c.route || '1-2'; refreshRow(x); });
+    markDirty(); renderMixer();
+    toast(`${targets.length} cue${targets.length === 1 ? '' : 's'} now use ${dev}, ${routeText(c.route)}.`);
+  }
+
+  function routeText(route) {
+    const o = AR.routeOptions(64).find(x => x.value === (route || '1-2'));
+    return o ? o.label.toLowerCase() : route;
   }
 
   function onInspectorInput(e) {
@@ -758,6 +793,14 @@
         break;
       }
       case 'test': fire(c, false); break;
+      case 'tone': {
+        const w = await AR.testTone(c.device, c.route);
+        if (w) toast(w, 'warn');
+        break;
+      }
+      case 'unlock': await AR.unlockLabels(); renderInspector(); renderMixer(); break;
+      case 'routeFolder': copyRoute(c, folderCues(c.folderId), 'in this folder'); break;
+      case 'routeAll': copyRoute(c, show.cues, 'in the show'); break;
       case 'fire': fire(c, true); break;
       case 'standby': setStandby(indexOf(c.id)); break;
       case 'learn':
@@ -1598,6 +1641,8 @@
       <div class="settings-grid">
         <label>Default output for new cues</label>
         <select id="sDefDev">${deviceOptions(settings.defaultDevice).map(([v, l]) => `<option value="${esc(v)}" ${v === settings.defaultDevice ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+        <label>Default channels for new cues</label>
+        <div class="row"><select id="sDefRoute"></select><button class="ibtn" id="sTone" title="Plays a short beep on this output and these channels">🔊 Test</button></div>
         <label>Output devices</label>
         <div class="row"><span class="muted">${devs.length} found${noLabels ? ' (names hidden)' : ''}</span><button class="ibtn" id="sUnlock">${noLabels ? 'Show device names' : 'Refresh'}</button></div>
         <label>Stop All fade (s)</label><input type="number" id="sStopFade" min="0" step="0.5" value="${settings.stopFade}">
@@ -1650,13 +1695,15 @@
       </div>
       <p class="muted">Updates download in the background and install when you close the app, or straight away with Restart &amp; update. The app never restarts by itself during a show.</p>`;
     renderUpdate();
+    fillRouteSelect($('#sDefRoute'), null, settings.defaultDevice, settings.defaultRoute);
   }
 
   $('#settingsBody').addEventListener('change', async (e) => {
     const t = e.target;
     switch (t.id) {
       case 'sDisplay': settings.outputDisplay = t.value ? Number(t.value) : null; break;
-      case 'sDefDev': settings.defaultDevice = t.value; renderMixer(); break;
+      case 'sDefDev': settings.defaultDevice = t.value; renderMixer(); fillRouteSelect($('#sDefRoute'), null, settings.defaultDevice, settings.defaultRoute); break;
+      case 'sDefRoute': settings.defaultRoute = t.value; break;
       case 'sStopFade': settings.stopFade = Math.max(0, parseFloat(t.value) || 0); break;
       case 'sGoProt': settings.goProtect = Math.max(0, parseInt(t.value, 10) || 0); break;
       case 'sOscOn': settings.oscEnabled = t.checked; saveSettings(); await applyOsc(); renderSettings(); return;
@@ -1683,6 +1730,7 @@
     }
     if (b.id === 'sUpdCheck') { checkUpdates(); return; }
     if (b.id === 'sUpdInstall') { installUpdate(); return; }
+    if (b.id === 'sTone') { const w = await AR.testTone(settings.defaultDevice, settings.defaultRoute); if (w) toast(w, 'warn'); return; }
     if (b.id === 'sUnlock') { await AR.unlockLabels(); renderSettings(); renderInspector(); return; }
     if (b.dataset.learn) {
       midiLearn = midiLearn && midiLearn.action === b.dataset.learn ? null : { action: b.dataset.learn };

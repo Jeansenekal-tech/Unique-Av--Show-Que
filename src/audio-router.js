@@ -140,8 +140,8 @@
     return { mono: false, start: Math.max(0, parseInt(route.split('-')[0], 10) - 1) };
   }
 
-  // Connects a media element. Returns { fade, vol, ctx, warning, disconnect }.
-  async function connect(el, deviceLabel, route) {
+  // Resolves a device label + route to a context and channel layout.
+  async function target(deviceLabel, route) {
     let warning = '';
     let id = idForLabel(deviceLabel);
     if (id === null) { await refreshDevices(); id = idForLabel(deviceLabel); } // device list not read yet (output window)
@@ -154,39 +154,65 @@
       warning = warning || `Channels ${route} not available on this output (${n} ch) – using 1-2`;
       start = 0; mono = false;
     }
+    return { ctx, n, mono, start, warning };
+  }
 
+  // Sends a stereo node to the chosen channels of the device's output bus.
+  // Returns the extra nodes created so they can be disconnected later.
+  function routeInto(ctx, n, mono, start, node) {
+    const merger = ctx.createChannelMerger(n);
+    const nodes = [merger];
+    if (mono || n === 1) {
+      const down = ctx.createGain();
+      down.channelCount = 1; down.channelCountMode = 'explicit'; down.channelInterpretation = 'speakers';
+      node.connect(down); down.connect(merger, 0, n === 1 ? 0 : start);
+      nodes.push(down);
+    } else {
+      const split = ctx.createChannelSplitter(2);
+      node.connect(split);
+      split.connect(merger, 0, start);
+      split.connect(merger, 1, start + 1);
+      nodes.push(split);
+    }
+    merger.connect(buses.get(ctx).gain);
+    return nodes;
+  }
+
+  // Connects a media element. Returns { fade, vol, ctx, warning, disconnect }.
+  async function connect(el, deviceLabel, route) {
+    const { ctx, n, mono, start, warning } = await target(deviceLabel, route);
     const src = ctx.createMediaElementSource(el);
     const fade = ctx.createGain();
     const vol = ctx.createGain();
     // Force stereo so mono files play on both sides of a pair.
     fade.channelCount = 2; fade.channelCountMode = 'explicit'; fade.channelInterpretation = 'speakers';
     src.connect(fade); fade.connect(vol);
-    const merger = ctx.createChannelMerger(n);
-    const nodes = [src, fade, vol, merger];
-
-    if (mono) {
-      const down = ctx.createGain();
-      down.channelCount = 1; down.channelCountMode = 'explicit'; down.channelInterpretation = 'speakers';
-      vol.connect(down); down.connect(merger, 0, start);
-      nodes.push(down);
-    } else if (n === 1) {
-      const down = ctx.createGain();
-      down.channelCount = 1; down.channelCountMode = 'explicit'; down.channelInterpretation = 'speakers';
-      vol.connect(down); down.connect(merger, 0, 0);
-      nodes.push(down);
-    } else {
-      const split = ctx.createChannelSplitter(2);
-      vol.connect(split);
-      split.connect(merger, 0, start);
-      split.connect(merger, 1, start + 1);
-      nodes.push(split);
-    }
-    merger.connect(buses.get(ctx).gain);
+    const nodes = [src, fade, vol, ...routeInto(ctx, n, mono, start, vol)];
 
     return {
       ctx, fade, vol, warning,
       disconnect() { nodes.forEach(nd => { try { nd.disconnect(); } catch (e) {} }); }
     };
+  }
+
+  // Plays a short quiet beep on the chosen output and channels so the user can
+  // hear which speakers they are. Returns a warning string ('' when fine).
+  async function testTone(deviceLabel, route, seconds = 1) {
+    const { ctx, n, mono, start, warning } = await target(deviceLabel, route);
+    const osc = ctx.createOscillator();
+    osc.frequency.value = 1000;
+    const env = ctx.createGain();
+    env.channelCount = 2; env.channelCountMode = 'explicit'; env.channelInterpretation = 'speakers';
+    const t = ctx.currentTime;
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(0.2, t + 0.02);
+    env.gain.setValueAtTime(0.2, t + seconds - 0.05);
+    env.gain.linearRampToValueAtTime(0, t + seconds);
+    osc.connect(env);
+    const nodes = [osc, env, ...routeInto(ctx, n, mono, start, env)];
+    osc.start(t); osc.stop(t + seconds + 0.05);
+    osc.onended = () => nodes.forEach(nd => { try { nd.disconnect(); } catch (e) {} });
+    return warning;
   }
 
   function ramp(param, ctx, target, seconds) {
@@ -201,10 +227,10 @@
   function routeOptions(maxCh) {
     const opts = [];
     const n = Math.max(2, maxCh || 16);
-    for (let i = 1; i < n; i += 2) opts.push({ value: `${i}-${i + 1}`, label: `Ch ${i}-${i + 1} (stereo)` });
-    for (let i = 1; i <= n; i++) opts.push({ value: `m${i}`, label: `Ch ${i} (mono)` });
+    for (let i = 1; i < n; i += 2) opts.push({ value: `${i}-${i + 1}`, label: `Outputs ${i} + ${i + 1} (stereo)` });
+    for (let i = 1; i <= n; i++) opts.push({ value: `m${i}`, label: `Output ${i} only (mono)` });
     return opts;
   }
 
-  window.AudioRouter = { refreshDevices, unlockLabels, idForLabel, connect, ramp, channelCount, routeOptions, levels, levelsByLabel, setMixer, dbToGain, get devices() { return devices; } };
+  window.AudioRouter = { refreshDevices, unlockLabels, idForLabel, connect, testTone, ramp, channelCount, routeOptions, levels, levelsByLabel, setMixer, dbToGain, get devices() { return devices; } };
 })();
