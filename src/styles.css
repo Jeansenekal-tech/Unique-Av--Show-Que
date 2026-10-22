@@ -294,6 +294,9 @@ body.has-wave { grid-template-rows: auto auto minmax(0, 1fr) auto clamp(120px, 2
 .wave-bar label.in input:focus, .wave-bar label.out input:focus { outline: none; border-color: var(--accent); }
 .wave-len { margin-left: 10px; color: #c3c8d3; font-family: var(--mono); font-size: 12px; }
 .wave-len b { color: var(--text); }
+.wave-bar label.wave-fade { font: 700 11px var(--mono); color: #e5a12a; display: flex; align-items: center; gap: 5px; }
+.wave-bar label.wave-fade input { width: 52px; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 3px 6px; font: 12px var(--mono); color: var(--text); text-align: right; }
+.wave-bar label.wave-fade input:focus { outline: none; border-color: var(--accent); }
 .wave-check { display: flex; align-items: center; gap: 5px; color: #c3c8d3; }
 .wave-bar label.wave-gain { font: 700 11px var(--mono); color: #e5a12a; display: flex; align-items: center; gap: 6px; }
 .wave-bar label.wave-gain input { width: 110px; accent-color: #e5a12a; }
@@ -304,7 +307,7 @@ body.has-wave { grid-template-rows: auto auto minmax(0, 1fr) auto clamp(120px, 2
 .wave-peak.clip { color: var(--stop); font-weight: 700; }
 #waveCanvas { flex: 1; width: 100%; min-height: 0; display: block; outline: none; border-top: 1px solid #1d2128; }
 #waveCanvas:focus { box-shadow: inset 0 0 0 1px #3fa7ff55; }
-.wave-panel.locked .edit-only, .wave-panel.locked label.wave-gain, .wave-panel.locked label.in, .wave-panel.locked label.out { opacity: .4; pointer-events: none; }
+.wave-panel.locked .edit-only, .wave-panel.locked label.wave-gain, .wave-panel.locked label.wave-fade, .wave-panel.locked label.in, .wave-panel.locked label.out { opacity: .4; pointer-events: none; }
 
 /* ---------- bottom: playing + mixer ---------- */
 .bottom { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-height: 0; border-top: 1px solid var(--line); background: #14161b; }

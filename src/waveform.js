@@ -78,6 +78,14 @@
     const gainLin = () => Math.pow(10, gainDb() / 20);
     const inPt = () => Math.max(0, cue.startAt || 0);
     const outPt = () => { const d = duration(); return cue.endAt > 0 ? Math.min(cue.endAt, d || cue.endAt) : d; };
+    // Level the fades put on time t (0..1), drawn into the waveform. Fade-out only counts when it runs at Out.
+    function envelope(t) {
+      const a = inPt(), b = outPt(), fi = cue.fadeIn || 0, fo = cue.fadeAtEnd ? cue.fadeOut || 0 : 0;
+      let k = 1;
+      if (fi > 0 && t < a + fi) k = Math.min(k, Math.max(0, (t - a) / fi));
+      if (fo > 0 && t > b - fo) k = Math.min(k, Math.max(0, (b - t) / fo));
+      return k;
+    }
 
     // ------------------------------------------------------------ show / hide
     async function show(c) {
@@ -176,10 +184,11 @@
           let lo = 0, hi = 0;
           for (let i = i0; i < i1; i++) { if (peaks.min[i] < lo) lo = peaks.min[i]; if (peaks.max[i] > hi) hi = peaks.max[i]; }
           const tm = (t0 + t1) / 2;
-          hi *= k; lo *= k;
+          const inCut = tm >= a && tm <= b;
+          const e = inCut ? envelope(tm) : 1;
+          hi *= k * e; lo *= k * e;
           const clip = hi > 1 || lo < -1;
           hi = Math.min(1, hi); lo = Math.max(-1, lo);
-          const inCut = tm >= a && tm <= b;
           g.fillStyle = inCut ? (clip ? '#ff5a3c' : cue.type === 'video' ? '#b07ce8' : '#4fa8ff') : '#2c3442';
           const y1 = mid - hi * (wh / 2 - 2), y2 = mid - lo * (wh / 2 - 2);
           g.fillRect(x, y1, 1, Math.max(1, y2 - y1));
@@ -199,8 +208,16 @@
       const fi = cue.fadeIn || 0, fo = cue.fadeOut || 0;
       g.lineWidth = 1.5; g.strokeStyle = '#e5a12a';
       if (fi > 0) {
-        g.beginPath(); g.moveTo(xa, top + wh); g.lineTo(tToX(a + fi, w), top + 2); g.stroke();
-        handle(tToX(a + fi, w), top + 2, '#e5a12a');
+        const xf = tToX(a + fi, w);
+        g.fillStyle = 'rgba(229,161,42,.10)';
+        g.beginPath(); g.moveTo(xa, top); g.lineTo(xf, top); g.lineTo(xa, top + wh); g.closePath(); g.fill();
+        g.beginPath(); g.moveTo(xa, top + wh); g.lineTo(xf, top + 2); g.stroke();
+        handle(xf, top + 2, '#e5a12a');
+        if (!drag || drag.k === 'fadeIn') label(`FADE IN ${fi.toFixed(1)}s`, xf + 8, top + 11, '#e5a12a');
+      } else if (!isLocked() && duration()) {
+        // Empty handle on the In point: drag it right to add a fade-in.
+        g.strokeStyle = '#e5a12a'; g.lineWidth = 1.5;
+        g.strokeRect(xa + 0.75, top + 2.75, 8.5, 8.5);
       }
       if (fo > 0) {
         g.setLineDash(cue.fadeAtEnd ? [] : [4, 4]);
@@ -223,15 +240,22 @@
       if (live != null) playhead(tToX(live, w), '#ffffff');
       if (preview) playhead(tToX(preview.el.currentTime, w), '#e5a12a');
 
-      function handle(x, y, col) { g.fillStyle = col; g.fillRect(x - 4, y, 8, 8); }
+      function handle(x, y, col) { g.fillStyle = col; g.fillRect(x - 5, y, 10, 10); }
+      function label(text, x, y, col) {
+        g.font = 'bold 10px Segoe UI, sans-serif';
+        const tw = g.measureText(text).width;
+        if (x + tw + 6 > w) x = w - tw - 6;
+        g.fillStyle = 'rgba(13,15,19,.8)'; g.fillRect(x - 3, y - 10, tw + 6, 14);
+        g.fillStyle = col; g.fillText(text, x, y);
+      }
       function marker(x, col, label, left) {
         g.strokeStyle = col; g.lineWidth = 2;
         g.beginPath(); g.moveTo(x, top); g.lineTo(x, h); g.stroke();
         g.fillStyle = col;
         const lw = 26;
-        g.fillRect(left ? x : x - lw, top, lw, 14);
+        g.fillRect(left ? x : x - lw, h - 14, lw, 14);
         g.fillStyle = '#0d0f13'; g.font = 'bold 10px Segoe UI, sans-serif';
-        g.fillText(label, (left ? x : x - lw) + 4, top + 11);
+        g.fillText(label, (left ? x : x - lw) + 4, h - 3);
       }
       function playhead(x, col) {
         g.strokeStyle = col; g.lineWidth = 2;
@@ -250,6 +274,7 @@
       $('#waveLen').textContent = duration() ? fmt(Math.max(0, b - a)) : '–';
       $('#waveFull').textContent = duration() ? fmt(duration()) : '–';
       $('#waveFadeEnd').checked = !!cue.fadeAtEnd;
+      if (document.activeElement !== $('#waveFadeIn')) $('#waveFadeIn').value = `${(cue.fadeIn || 0).toFixed(1)}s`;
       $('#waveGain').value = gainDb();
       if (document.activeElement !== $('#waveGainVal')) $('#waveGainVal').value = `${gainDb() > 0 ? '+' : ''}${gainDb().toFixed(1)} dB`;
       syncPeak();
@@ -292,7 +317,7 @@
         const v = Math.max(inPt() + 0.1, d ? Math.min(t, d) : t);
         onChange(cue, { endAt: d && v >= d - 0.01 ? 0 : v }, final);
       } else if (which === 'fadeIn') {
-        const v = Math.max(0, Math.min(Math.round((t - inPt()) * 10) / 10, outPt() - inPt()));
+        const v = Math.max(0, Math.min(Math.round((t - inPt()) * 10) / 10, Math.floor((outPt() - inPt()) * 10) / 10));
         onChange(cue, { fadeIn: v }, final);
       } else if (which === 'fadeOut') {
         const v = Math.max(0, Math.min(Math.round((outPt() - t) * 10) / 10, outPt() - inPt()));
@@ -319,8 +344,19 @@
         if (preview !== pv) { audio.disconnect(); return; }
         pv.audio = audio;
         audio.vol.gain.value = getVolume(cue);
+        // Starting at In: hear the cue's fade-in, as it plays on GO.
+        const fi = cue.fadeIn || 0;
+        if (fi > 0 && from < inPt() + fi) {
+          audio.fade.gain.value = envelope(from);
+          pv.fadeFrom = from;
+        }
       }, () => { el.volume = Math.max(0, Math.min(1, getVolume(cue))); })
-        .then(() => { if (preview === pv) return el.play(); })
+        .then(() => {
+          if (preview !== pv) return;
+          return el.play().then(() => {
+            if (pv.audio && pv.fadeFrom != null) window.AudioRouter.ramp(pv.audio.fade.gain, pv.audio.ctx, 1, inPt() + (cue.fadeIn || 0) - pv.fadeFrom);
+          });
+        })
         .catch(e => { toast('Preview failed: ' + e.message, 'err'); stopPreview(); });
     }
     function stopPreview() {
@@ -342,15 +378,18 @@
     function hit(x, y, w) {
       if (!cue || isLocked()) return null;
       const a = inPt(), b = outPt();
-      const cand = [];
-      if (y < RULER + 14) {
-        if (cue.fadeIn > 0) cand.push(['fadeIn', tToX(a + cue.fadeIn, w)]);
-        if (cue.fadeOut > 0) cand.push(['fadeOut', tToX(b - cue.fadeOut, w)]);
+      const pick = (cand) => {
+        let best = null;
+        for (const [k, cx] of cand) { const d = Math.abs(cx - x); if (d <= HANDLE_PX && (!best || d < best.d)) best = { k, d }; }
+        return best && best.k;
+      };
+      if (y < RULER + 16) {
+        const fade = [['fadeIn', tToX(a + (cue.fadeIn || 0), w) + (cue.fadeIn > 0 ? 0 : 5)]];
+        if (cue.fadeOut > 0) fade.push(['fadeOut', tToX(b - cue.fadeOut, w)]);
+        const k = pick(fade);
+        if (k) return k;
       }
-      cand.push(['in', tToX(a, w)], ['out', tToX(b, w)]);
-      let best = null;
-      for (const [k, cx] of cand) { const d = Math.abs(cx - x); if (d <= HANDLE_PX && (!best || d < best.d)) best = { k, d }; }
-      return best && best.k;
+      return pick([['in', tToX(a, w)], ['out', tToX(b, w)]]);
     }
 
     canvas.addEventListener('mousedown', (e) => {
@@ -432,6 +471,13 @@
       setGain(v, true); e.target.blur();
     });
     $('#waveGainVal').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.dispatchEvent(new Event('change')); });
+    $('#waveFadeIn').addEventListener('change', (e) => {
+      const v = parseFloat(String(e.target.value).replace(',', '.'));
+      if (isNaN(v) || !cue || isLocked()) { syncFields(); return; }
+      setPoint('fadeIn', inPt() + Math.max(0, v), true);
+      e.target.blur();
+    });
+    $('#waveFadeIn').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.dispatchEvent(new Event('change')); });
     $('#waveFadeEnd').addEventListener('change', (e) => {
       if (!cue || isLocked()) { syncFields(); return; }
       const patch = { fadeAtEnd: e.target.checked };
