@@ -46,6 +46,7 @@
   let outputOpen = false;
   let midiAccess = null;
   let midiLearn = null;
+  let padLearn = false; // pads view: clicking a pad arms MIDI learn instead of playing it
   const ccLast = {};
   let oscStatus = { ok: false };
   let httpStatus = { ok: false };
@@ -65,7 +66,8 @@
       outputDisplay: null, defaultDevice: '', stopFade: 2, goProtect: 300,
       oscEnabled: true, oscPort: 53000, fbHost: '', fbPort: 53001,
       httpEnabled: true, httpPort: 53000,
-      midiInput: 'all', midiMap: [], autoUpdate: true
+      midiInput: 'all', midiMap: [], autoUpdate: true,
+      view: 'list', padToggle: true
     };
     try { return Object.assign(def, JSON.parse(localStorage.getItem('showcue.settings') || '{}')); } catch (e) { return def; }
   }
@@ -143,7 +145,7 @@
   function selectFolder(id) {
     selectedFolderId = id;
     selectedId = null;
-    $$('.cue-row.selected').forEach(r => r.classList.remove('selected'));
+    $$('.cue-row.selected, .pad.selected').forEach(r => r.classList.remove('selected'));
     $$('.folder-row').forEach(r => r.classList.toggle('selected', r.dataset.folder === id));
     renderInspector();
   }
@@ -356,6 +358,104 @@
     </div>`;
   }
 
+  // ------------------------------------------------------------------ pads view
+  // The same cues as the list, drawn as MiX16-style channel strips: name,
+  // volume fader, times, a big numbered play button, pause and stop. Folders
+  // become tabs. A pad fires its cue without moving standby, like a MIDI trigger.
+  const cueMidi = (id) => settings.midiMap.find(m => m.action === 'cue' && m.cueId === id);
+  const padsView = () => settings.view === 'pads';
+  const hasVolume = (c) => c.type === 'audio' || c.type === 'video';
+  let padTab = 'all'; // 'all', '' (cues not in a folder) or a folder id
+
+  function padHTML(c, i) {
+    const len = cueLength(c);
+    const hasFile = ['audio', 'video', 'image'].includes(c.type);
+    const isMissing = missing.has(c.id) || (hasFile && !c.file);
+    const map = cueMidi(c.id);
+    const learning = midiLearn && midiLearn.cueId === c.id;
+    const midi = learning ? 'Press a key…' : map ? sigLabel(map.sig) : (padLearn ? 'No key' : '');
+    const vol = c.volume == null ? 100 : c.volume;
+    return `<div class="pad ${i === standby ? 'pad-standby' : ''} ${c.id === selectedId ? 'selected' : ''} ${isMissing ? 'missing' : ''} ${learning ? 'learning' : ''}"
+        data-id="${c.id}" style="--pc:${c.color ? COLOR_HEX[c.color] : '#ff8a80'}" title="${esc(c.notes || displayName(c))}">
+      <div class="sp-name">${esc(displayName(c))}</div>
+      <div class="sp-mid">
+        <div class="sp-side"><span class="tag ${c.type}">${TYPES[c.type].tag}</span>${isMissing && hasFile ? '<span class="sp-warn" title="File missing">⚠</span>' : ''}</div>
+        ${hasVolume(c)
+          ? `<input type="range" class="sp-fader" min="0" max="100" step="1" value="${vol}" title="Cue volume (double-click: 100%)">`
+          : '<div class="sp-nofader"></div>'}
+        <div class="sp-side"></div>
+      </div>
+      <div class="sp-vol">${hasVolume(c) ? vol + '%' : '&nbsp;'}</div>
+      <div class="sp-time"><span class="sp-el">${len ? '0:00.0' : ''}</span><span class="sp-tot">${len ? fmtTenths(len) : ''}</span></div>
+      <button class="sp-play" data-pact="play" title="Play (click again to stop)">${esc(c.number) || '▶'}</button>
+      <div class="sp-btns"><button data-pact="pause" title="Pause / resume">❚❚</button><button data-pact="stop" title="Stop with fade (Shift-click: stop now)">Stop</button></div>
+      <div class="sp-foot">${c.type === 'audio' || c.type === 'video'
+        ? `<button class="sp-loop ${c.loop ? 'on' : ''}" data-pact="loop" title="Loop">⟲</button>` : '<span></span>'}<span class="pad-midi ${map ? 'set' : ''}">${esc(midi)}</span></div>
+      <div class="pad-fill"></div>
+      ${padLearn && map && !learning ? '<button class="pad-x" data-pact="unlearn" title="Clear this pad\'s MIDI key">✕</button>' : ''}
+    </div>`;
+  }
+
+  function renderPads() {
+    const box = $('#padGrid');
+    if (!padsView()) { box.innerHTML = ''; return; }
+    const loose = show.cues.some(c => !groupOf(c));
+    if (padTab !== 'all' && !(padTab === '' ? loose : folderById(padTab))) padTab = 'all';
+    let tabs = '';
+    if (show.folders.length) {
+      const tab = (id, label, n) => `<button class="pad-tab ${padTab === id ? 'on' : ''}" data-tab="${esc(id)}">${esc(label)} <small>${n}</small></button>`;
+      tabs = tab('all', 'All cues', show.cues.length)
+        + (loose ? tab('', 'No folder', folderCues('').length) : '')
+        + show.folders.map(f => tab(f.id, f.name, folderCues(f.id).length)).join('');
+    }
+    let h = '';
+    let i = 0;
+    groupIds().forEach(gid => {
+      const f = gid ? folderById(gid) : null;
+      let pads = '';
+      while (i < show.cues.length && groupOf(show.cues[i]) === gid) { pads += padHTML(show.cues[i], i); i++; }
+      if (padTab !== 'all' && padTab !== gid) return;
+      if (!f && !pads) return;
+      if (f && padTab === 'all') h += `<div class="pad-folder" data-folder="${f.id}"><span class="f-name">${esc(f.name)}</span></div>`;
+      h += `<div class="pads">${pads || '<div class="pad-empty">No cues in this folder yet</div>'}</div>`;
+    });
+    const mv = show.masterVolume == null ? 100 : show.masterVolume;
+    box.innerHTML = `<div class="pad-main">${tabs ? `<div class="pad-tabs">${tabs}</div>` : ''}<div class="pad-scroll">${h}</div></div>
+      <div class="pad-master"><div class="sp-name">Master</div>
+        <input type="range" class="sp-fader" id="padMaster" min="0" max="100" step="1" value="${mv}" title="Master volume">
+        <div class="sp-vol" id="padMasterVal">${mv}%</div></div>`;
+    box.classList.toggle('learn', padLearn);
+    updatePlayingRows();
+  }
+
+  function setView(v) {
+    settings.view = v === 'pads' ? 'pads' : 'list';
+    saveSettings();
+    if (!padsView()) setPadLearn(false);
+    $('#cuelist').classList.toggle('pad-view', padsView());
+    $$('.view-toggle button').forEach(b => b.classList.toggle('on', b.dataset.view === settings.view));
+    renderPads();
+  }
+
+  function setPadLearn(v) {
+    padLearn = v;
+    if (!v && midiLearn && midiLearn.cueId) midiLearn = null;
+    if (v && !midiAccess) toast('No MIDI devices found. Connect a MIDI controller first.', 'warn');
+    $('#padLearnBtn').classList.toggle('learning', v);
+    $('#padLearnBtn').textContent = v ? 'Done learning' : 'MIDI Learn';
+    renderPads();
+    renderInspector();
+  }
+
+  // Pad click or its MIDI key: play the cue, or stop it if it is already playing.
+  function padPress(c) {
+    const el = $(`.pad[data-id="${c.id}"]`);
+    if (el) { el.classList.add('hit'); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('hit'), 150); }
+    const playing = [...active.values()].filter(i => i.cue.id === c.id && i.state !== 'stopping');
+    if (playing.length && settings.padToggle) { playing.forEach(i => stopInst(i)); return; }
+    fire(c, true);
+  }
+
   function renderList() {
     const box = $('#cueRows');
     normalizeFolders();
@@ -371,6 +471,7 @@
     $('#cueCount').textContent = `${show.cues.length} cue${show.cues.length === 1 ? '' : 's'}${nf ? ` · ${nf} folder${nf === 1 ? '' : 's'}` : ''}`;
     const ren = box.querySelector('.f-rename');
     if (ren) { ren.focus(); ren.select(); }
+    renderPads();
     renderStandby();
     updatePlayingRows();
     renderMixer();
@@ -384,12 +485,18 @@
     $('#standbyNotes').textContent = c ? (c.notes || '') : '';
     $('#goBtn').disabled = !c;
     $$('.cue-row').forEach((r, i) => r.classList.toggle('standby', i === standby));
+    $$('.pad').forEach(p => p.classList.toggle('pad-standby', !!c && p.dataset.id === c.id));
     const sf = c && c.folderId;
     $$('.folder-row').forEach(r => r.classList.toggle('has-standby', r.dataset.folder === sf));
     sendFeedback();
   }
 
   function scrollToRow(i) {
+    if (padsView()) {
+      const p = show.cues[i] && $(`.pad[data-id="${show.cues[i].id}"]`);
+      if (p) p.scrollIntoView({ block: 'nearest' });
+      return;
+    }
     let r = $$('.cue-row')[i];
     // A cue in a closed folder is hidden: show its folder instead.
     if (r && r.classList.contains('folded')) r = $(`.folder-row[data-folder="${show.cues[i].folderId}"]`);
@@ -408,17 +515,40 @@
     selectedFolderId = null;
     $$('.folder-row.selected').forEach(r => r.classList.remove('selected'));
     $$('.cue-row').forEach(r => r.classList.toggle('selected', r.dataset.id === id));
+    $$('.pad').forEach(p => p.classList.toggle('selected', p.dataset.id === id));
     renderInspector();
     if (rebuildList) { /* rows already updated */ }
   }
 
   function updatePlayingRows() {
     const prog = {};
+    const left = {};
+    const live = new Set(); // cues with an instance that is not fading out
+    const paused = new Set();
+    const elapsed = {};
     for (const inst of active.values()) {
+      if (inst.state !== 'stopping') live.add(inst.cue.id);
+      if (inst.state === 'paused') paused.add(inst.cue.id);
       const d = inst.dur || 0;
       const p = d > 0 ? Math.min(1, inst.t / d) : 0;
-      if (!(inst.cue.id in prog) || p > prog[inst.cue.id]) prog[inst.cue.id] = p;
+      if (!(inst.cue.id in prog) || p > prog[inst.cue.id]) {
+        prog[inst.cue.id] = p;
+        left[inst.cue.id] = d > 0 ? Math.max(0, d - Math.max(0, inst.t || 0)) : null;
+        elapsed[inst.cue.id] = Math.max(0, inst.t || 0);
+      }
     }
+    $$('.pad').forEach(el => {
+      const id = el.dataset.id;
+      const on = id in prog;
+      el.classList.toggle('playing', on);
+      el.classList.toggle('fading', on && !live.has(id));
+      el.classList.toggle('paused', paused.has(id));
+      el.querySelector('.pad-fill').style.width = on ? (prog[id] * 100).toFixed(2) + '%' : '0';
+      const c = cueById(id);
+      const len = c ? cueLength(c) : 0;
+      el.querySelector('.sp-el').textContent = on ? fmtTenths(elapsed[id] || 0) : (len ? '0:00.0' : '');
+      el.querySelector('.sp-tot').textContent = on && left[id] != null ? '-' + fmtTenths(left[id]) : (len ? fmtTenths(len) : '');
+    });
     $$('.cue-row').forEach(r => {
       const id = r.dataset.id;
       const on = id in prog;
@@ -596,13 +726,13 @@
     if (key === 'number' || key === 'name' || key === 'notes') renderStandby();
   }
 
-  function refreshRow(c) {
+  function refreshRow(c, keepPad) {
     const i = indexOf(c.id);
-    const old = $(`.cue-row[data-id="${c.id}"]`);
-    if (!old) return;
     const tmp = document.createElement('div');
-    tmp.innerHTML = rowHTML(c, i);
-    old.replaceWith(tmp.firstElementChild);
+    const pad = !keepPad && $(`.pad[data-id="${c.id}"]`);
+    if (pad) { tmp.innerHTML = padHTML(c, i); pad.replaceWith(tmp.firstElementChild); }
+    const old = $(`.cue-row[data-id="${c.id}"]`);
+    if (old) { tmp.innerHTML = rowHTML(c, i); old.replaceWith(tmp.firstElementChild); }
     updatePlayingRows();
   }
 
@@ -1000,6 +1130,8 @@
     $('#masterVal').textContent = show.masterVolume;
     const mf = $('#mixStrips .strip.master .fader');
     if (mf) { mf.value = show.masterVolume; mf.closest('.strip').querySelector('.st-db').textContent = show.masterVolume; }
+    const pm = $('#padMaster');
+    if (pm) { pm.value = show.masterVolume; $('#padMasterVal').textContent = show.masterVolume + '%'; }
     for (const inst of active.values()) if (inst.kind === 'audio') setInstVolume(inst);
     api.send('output-cmd', { cmd: { cmd: 'master', value: show.masterVolume } });
   }
@@ -1388,10 +1520,20 @@
     if (midiLearn) {
       if (midiLearn.action === 'master' && !sig.startsWith('cc:')) { toast('Master volume needs a CC fader or knob', 'warn'); return; }
       settings.midiMap = settings.midiMap.filter(m => !(m.action === midiLearn.action && (m.cueId || null) === (midiLearn.cueId || null)));
+      let note = '';
+      if (midiLearn.action === 'cue') {
+        // One key per pad: a key learned for this cue is taken off any other cue.
+        const taken = settings.midiMap.filter(m => m.action === 'cue' && m.sig === sig).map(m => cueById(m.cueId)).filter(Boolean);
+        settings.midiMap = settings.midiMap.filter(m => !(m.action === 'cue' && m.sig === sig));
+        if (taken.length) note = ` (moved from cue ${taken.map(t => t.number).join(', ')})`;
+        const g = settings.midiMap.find(m => m.action !== 'cue' && m.sig === sig);
+        if (g) note += ` – note: this key also does ${MIDI_ACTIONS.find(a => a[0] === g.action)[1]}`;
+      }
       settings.midiMap.push({ sig, action: midiLearn.action, cueId: midiLearn.cueId || null });
       saveSettings();
-      toast(`Learned ${sigLabel(sig)}`);
+      toast(`Learned ${sigLabel(sig)}${note}`);
       midiLearn = null;
+      renderPads();
       renderInspector();
       if (!$('#settingsModal').classList.contains('hidden')) renderSettings();
       return;
@@ -1413,7 +1555,7 @@
       case 'pause-all': setPausedAll(!pausedAll); break;
       case 'prev': setStandby(standby - 1, true); break;
       case 'next': setStandby(standby + 1, true); break;
-      case 'cue': { const c = cueById(cueId); if (c) fire(c, true); break; }
+      case 'cue': { const c = cueById(cueId); if (c) padPress(c); break; }
     }
   }
 
@@ -1494,7 +1636,11 @@
           return c ? `<tr><td>Fire cue ${esc(c.number)} – ${esc(displayName(c))}</td><td class="sig">${esc(sigLabel(m.sig))}</td><td style="text-align:right"><button class="ibtn" data-unlearn-cue="${m.cueId}">Clear</button></td></tr>` : '';
         }).join('')}
       </table>
-      <p class="muted">MIDI mappings are saved on this computer and work with any show. Per-cue triggers are set in the cue's Follow section.</p>
+      <div class="settings-grid" style="margin-top:10px">
+        <label>Pressing a playing pad</label>
+        <select id="sPadToggle"><option value="1" ${settings.padToggle ? 'selected' : ''}>Stops it (fades out)</option><option value="0" ${settings.padToggle ? '' : 'selected'}>Plays it again on top</option></select>
+      </div>
+      <p class="muted">MIDI mappings are saved on this computer and work with any show. Per-cue triggers are set in the cue's Follow section, or with MIDI Learn in the Pads view. The pad setting also applies to a cue's MIDI key.</p>
       <h3>Updates</h3>
       <div class="settings-grid">
         <label>Installed version</label><span>${esc(appVersion || '–')}</span>
@@ -1520,6 +1666,7 @@
       case 'sFbHost': settings.fbHost = t.value.trim(); lastFb = null; sendFeedback(); break;
       case 'sFbPort': settings.fbPort = parseInt(t.value, 10) || 53001; lastFb = null; sendFeedback(); break;
       case 'sMidiIn': settings.midiInput = t.value; bindMidi(); updateMidiPill(); break;
+      case 'sPadToggle': settings.padToggle = t.value === '1'; break;
       case 'sAutoUpd': settings.autoUpdate = t.checked; saveSettings(); api.send('update-config', { auto: t.checked }); break;
     }
     saveSettings();
@@ -1738,6 +1885,74 @@
     if (n) { n.focus(); n.select(); }
   });
 
+  // pads view
+  const padGrid = $('#padGrid');
+  const padCue = (el) => { const p = el.closest('.pad'); return p ? cueById(p.dataset.id) : null; };
+  const liveInsts = (c) => [...active.values()].filter(i => i.cue.id === c.id && i.state !== 'stopping');
+  function setCueVolume(c, v, final) {
+    c.volume = Math.max(0, Math.min(100, Math.round(v)));
+    const pad = $(`.pad[data-id="${c.id}"]`);
+    if (pad) { pad.querySelector('.sp-vol').textContent = c.volume + '%'; pad.querySelector('.sp-fader').value = c.volume; }
+    for (const inst of active.values()) if (inst.cue.id === c.id) setInstVolume(inst);
+    markDirty();
+    refreshRow(c, true);
+    if (wave) wave.refresh();
+    if (final && c.id === selectedId) renderInspectorInner();
+  }
+  padGrid.addEventListener('mousedown', (e) => {
+    const p = e.target.closest('.pad');
+    if (p && !e.target.closest('button')) select(p.dataset.id);
+  });
+  padGrid.addEventListener('input', (e) => {
+    if (e.target.id === 'padMaster') { setMaster(parseFloat(e.target.value)); markDirty(); return; }
+    const c = e.target.classList.contains('sp-fader') && padCue(e.target);
+    if (c) setCueVolume(c, parseFloat(e.target.value), false);
+  });
+  padGrid.addEventListener('change', (e) => {
+    if (!e.target.classList.contains('sp-fader')) return;
+    const c = padCue(e.target);
+    if (c) setCueVolume(c, parseFloat(e.target.value), true);
+    e.target.blur();
+  });
+  padGrid.addEventListener('dblclick', (e) => {
+    if (e.target.id === 'padMaster') { setMaster(100); markDirty(); return; }
+    const c = e.target.classList.contains('sp-fader') && padCue(e.target);
+    if (c) setCueVolume(c, 100, true);
+  });
+  padGrid.addEventListener('click', (e) => {
+    const tab = e.target.closest('.pad-tab');
+    if (tab) { padTab = tab.dataset.tab; tab.blur(); renderPads(); return; }
+    const c = padCue(e.target);
+    if (!c) return;
+    const b = e.target.closest('button');
+    if (b) b.blur();
+    if (b && b.dataset.pact === 'unlearn') {
+      settings.midiMap = settings.midiMap.filter(m => !(m.action === 'cue' && m.cueId === c.id));
+      saveSettings(); renderPads(); renderInspector();
+      return;
+    }
+    if (padLearn) {
+      if (e.target.closest('.sp-fader')) return;
+      midiLearn = midiLearn && midiLearn.cueId === c.id ? null : { action: 'cue', cueId: c.id };
+      renderPads(); renderInspector();
+      return;
+    }
+    if (!b) return;
+    switch (b.dataset.pact) {
+      case 'play': padPress(c); break;
+      case 'pause': liveInsts(c).forEach(toggleInstPause); break;
+      case 'stop': [...active.values()].filter(i => i.cue.id === c.id).forEach(i => stopInst(i, e.shiftKey ? 0 : undefined)); break;
+      case 'loop':
+        if (locked) return;
+        c.loop = !c.loop;
+        markDirty(); refreshRow(c);
+        if (c.id === selectedId) renderInspectorInner();
+        break;
+    }
+  });
+  $$('.view-toggle button').forEach(b => b.addEventListener('click', blurAfter(() => setView(b.dataset.view))));
+  $('#padLearnBtn').addEventListener('click', blurAfter(() => setPadLearn(!padLearn)));
+
   // drag to reorder
   let dragId = null;
   let dragFolder = null;
@@ -1820,6 +2035,7 @@
     const t = e.target;
     const typing = t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && !['checkbox', 'range', 'button'].includes(t.type)) || t.tagName === 'SELECT');
     if (e.key === 'Escape' && !$$('.modal').every(m => m.classList.contains('hidden'))) { closeModals(); return; }
+    if (e.key === 'Escape' && padLearn) { e.preventDefault(); setPadLearn(false); return; }
     if (typing) {
       if (e.key === 'Escape') t.blur();
       return;
@@ -1952,6 +2168,7 @@
 
   (async function init() {
     initWave();
+    setView(settings.view);
     $('#showName').value = show.name;
     await AR.refreshDevices();
     renderList(); renderInspector(); renderActive(); updateTitle();

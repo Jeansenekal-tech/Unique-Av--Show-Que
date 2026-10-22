@@ -59,6 +59,10 @@
     <button id="dupBtn" class="edit" title="Duplicate cue (Ctrl+D)">Duplicate</button>
     <button id="delBtn" class="edit danger" title="Delete cue (Del)">Delete</button>
     <div class="spacer"></div>
+    <button id="padLearnBtn" class="pad-only" title="MIDI learn: click a pad, then press a key or pad on your MIDI controller. Click again (or Esc) when done.">MIDI Learn</button>
+    <div class="view-toggle" title="Switch between the cue list and big pad buttons">
+      <button data-view="list">☰ List</button><button data-view="pads">▦ Pads</button>
+    </div>
     <span id="cueCount" class="tlabel"></span>
   </div>
 
@@ -68,6 +72,7 @@
         <div>#</div><div>Type</div><div>Name</div><div class="r">Length</div><div class="r">In</div><div class="r">Out</div><div class="r">Vol</div><div>Output</div><div>Follow</div>
       </div>
       <div id="cueRows" class="cue-rows"></div>
+      <div id="padGrid" class="pad-grid"></div>
       <div id="emptyHint" class="empty-hint">
         <div class="big">Drop audio, video or image files here</div>
         <div>or use the Add buttons above. Press <kbd>Space</kbd> to GO.</div>
@@ -144,6 +149,13 @@
           <tr><td><kbd>Del</kbd></td><td>Delete selected cue (edit mode)</td></tr>
           <tr><td><kbd>Ctrl</kbd>+<kbd>L</kbd></td><td>Lock / unlock the show</td></tr>
         </table>
+        <h3>Pads view</h3>
+        <table>
+          <tr><td>▦ Pads (toolbar)</td><td>Show every cue as a channel strip with a volume fader. Click the numbered button to play; click it again while it plays to stop it. Folders are the tabs along the top</td></tr>
+          <tr><td>MIDI Learn</td><td>Click a pad, then press a key or pad on your MIDI controller. ✕ on a pad clears its key</td></tr>
+          <tr><td><kbd>Esc</kbd> during MIDI Learn</td><td>Finish learning</td></tr>
+        </table>
+        <p class="muted">Pads play a cue without moving standby, so GO carries on where it was. Arrange cues and folders in the List view.</p>
         <h3>Folders</h3>
         <table>
           <tr><td>+ Folder</td><td>Make a new folder (set) after the one you're in</td></tr>

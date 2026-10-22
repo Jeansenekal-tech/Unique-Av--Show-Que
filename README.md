@@ -72,6 +72,8 @@ npm run dist:mac   # on a Mac: build the Apple Silicon DMG into dist/
 - Drag audio, video or image files from Explorer onto the cue list, or use the **Add** buttons.
 - Click a cue to make it the standby cue and edit it on the right.
 - **Cutting a song**: select it, then drag the IN/OUT markers on the waveform. Click the waveform and press `I` / `O` to set points at the cursor; ←/→ nudges the cursor. *Hear start* / *Hear end* play the first/last 5 seconds of the cut. Preview plays on the computer's default output, with the cue's gain, and shows on the Default mixer strip.
+- **Pads view**: the *☰ List / ▦ Pads* switch in the toolbar shows every cue as a MiX16-style channel strip: name, volume fader, elapsed/remaining time, a big numbered play button, pause, stop and loop. Folders become tabs along the top and there is a Master fader on the right; the Playing list, mixer and waveform stay at the bottom. Click the numbered button to play, click it again while it plays to fade it out (Settings can make it play again on top instead). Pads don't move standby, so GO carries on where it was.
+- **MIDI pads**: in the Pads view click *MIDI Learn*, click a pad, then hit a key or pad on your MIDI controller (click anywhere on the strip). Repeat for each pad and click *Done learning* (or Esc). Each pad shows its key; ✕ clears it. A key only belongs to one pad.
 - **Settings (⚙)**: choose the output screen, default audio output, OSC port/feedback and MIDI mappings.
 - **Multichannel interfaces**: in Windows *Sound settings → your interface → Configure*, set the speaker layout (e.g. 7.1) so Windows exposes all outputs; then pick channels per cue. Click *Show device names* in Settings if devices appear unnamed.
 
