@@ -95,6 +95,7 @@
         <button data-w="checkIn" title="Hear the first 5 seconds of the cut">Hear start</button>
         <button data-w="checkOut" title="Hear the last 5 seconds of the cut">Hear end</button>
       </div>
+      <label class="wave-fade edit-only" title="Fade in from the IN point, in seconds. Or drag the orange square at the top of the IN marker.">FADE IN <input id="waveFadeIn" type="text" spellcheck="false"></label>
       <label class="wave-check edit-only" title="Fade out automatically before the OUT point, using the cue's fade-out time"><input type="checkbox" id="waveFadeEnd"> Fade at Out</label>
       <div class="wave-group gain">
         <label class="wave-gain edit-only" title="Cue gain: boost or cut this cue's level. The waveform shows the result. Double-click to reset to 0 dB.">GAIN <input id="waveGain" type="range" min="-24" max="12" step="0.5" value="0"></label>
@@ -154,7 +155,8 @@
         <h3>Waveform (click it first)</h3>
         <table>
           <tr><td>Drag green / red marker</td><td>Move the IN / OUT point</td></tr>
-          <tr><td>Drag the orange squares</td><td>Change fade-in / fade-out length</td></tr>
+          <tr><td>Drag the orange square at the top of IN</td><td>Add or change the fade-in (or type it in FADE IN)</td></tr>
+          <tr><td>Drag the orange square near OUT</td><td>Change the fade-out length</td></tr>
           <tr><td>Click</td><td>Place the cursor · double-click previews from there</td></tr>
           <tr><td><kbd>I</kbd> / <kbd>O</kbd></td><td>Set IN / OUT at the cursor</td></tr>
           <tr><td><kbd>←</kbd> <kbd>→</kbd> (Shift = 1 s)</td><td>Nudge the cursor 0.1 s</td></tr>
