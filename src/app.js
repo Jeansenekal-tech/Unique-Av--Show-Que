@@ -432,7 +432,6 @@
   // The same cues as the list, drawn as MiX16-style channel strips: name,
   // volume fader, times, a big numbered play button, pause and stop. Folders
   // become tabs. A pad fires its cue without moving standby, like a MIDI trigger.
-  const cueMidi = (id) => settings.midiMap.find(m => m.action === 'cue' && m.cueId === id);
   const padsView = () => settings.view === 'pads';
   const hasVolume = (c) => c.type === 'audio' || c.type === 'video';
   let padTab = 'all'; // 'all', '' (cues not in a folder) or a folder id
@@ -441,9 +440,10 @@
     const len = cueLength(c);
     const hasFile = ['audio', 'video', 'image'].includes(c.type);
     const isMissing = missing.has(c.id) || (hasFile && !c.file);
-    const map = cueMidi(c.id);
+    const maps = cueMaps(c.id);
+    const map = maps.length > 0;
     const learning = midiLearn && midiLearn.cueId === c.id;
-    const midi = learning ? 'Press a key…' : map ? sigLabel(map.sig) : (padLearn ? 'No key' : '');
+    const midi = learning ? 'Press a key or MIDI…' : map ? mapsLabel(maps) : (padLearn ? 'No key' : '');
     const vol = c.volume == null ? 100 : c.volume;
     return `<div class="pad ${i === standby ? 'pad-standby' : ''} ${c.id === selectedId ? 'selected' : ''} ${isMissing ? 'missing' : ''} ${learning ? 'learning' : ''}"
         data-id="${c.id}" style="--pc:${c.color ? COLOR_HEX[c.color] : '#ff8a80'}" title="${esc(c.notes || displayName(c))}">
@@ -460,9 +460,9 @@
       <button class="sp-play" data-pact="play" title="Play (click again to stop)">${esc(c.number) || '▶'}</button>
       <div class="sp-btns"><button data-pact="pause" title="Pause / resume">❚❚</button><button data-pact="stop" title="Stop with fade (Shift-click: stop now)">Stop</button></div>
       <div class="sp-foot">${c.type === 'audio' || c.type === 'video'
-        ? `<button class="sp-loop ${c.loop ? 'on' : ''}" data-pact="loop" title="Loop">⟲</button>` : '<span></span>'}<span class="pad-midi ${map ? 'set' : ''}">${esc(midi)}</span></div>
+        ? `<button class="sp-loop ${c.loop ? 'on' : ''}" data-pact="loop" title="Loop">⟲</button>` : '<span></span>'}<span class="pad-midi ${map ? 'set' : ''}" title="${esc(midi)}">${esc(midi)}</span></div>
       <div class="pad-fill"></div>
-      ${padLearn && map && !learning ? '<button class="pad-x" data-pact="unlearn" title="Clear this pad\'s MIDI key">✕</button>' : ''}
+      ${padLearn && map && !learning ? '<button class="pad-x" data-pact="unlearn" title="Clear this pad\'s keys">✕</button>' : ''}
     </div>`;
   }
 
@@ -524,14 +524,13 @@
   function setPadLearn(v) {
     padLearn = v;
     if (!v && midiLearn && midiLearn.cueId) midiLearn = null;
-    if (v && !midiAccess) toast('No MIDI devices found. Connect a MIDI controller first.', 'warn');
     $('#padLearnBtn').classList.toggle('learning', v);
-    $('#padLearnBtn').textContent = v ? 'Done learning' : 'MIDI Learn';
+    $('#padLearnBtn').textContent = v ? 'Done mapping' : 'Map keys';
     renderPads();
     renderInspector();
   }
 
-  // Pad click or its MIDI key: play the cue, or stop it if it is already playing.
+  // Pad click or its MIDI/keyboard key: play the cue, or stop it if it is already playing.
   function padPress(c) {
     const el = $(`.pad[data-id="${c.id}"]`);
     if (el) { el.classList.add('hit'); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('hit'), 150); }
@@ -762,8 +761,9 @@
     h += `<div class="group"><div class="group-title">Follow</div>`;
     h += fieldHTML('Then', sel('follow', c.follow, [['off', 'Wait for GO'], ['start', 'Start next cue with this one'], ['end', 'Start next cue when this ends']]));
     if (c.follow !== 'off') h += fieldHTML('Delay (s)', num('followDelay', c.followDelay));
-    const map = settings.midiMap.find(m => m.action === 'cue' && m.cueId === c.id);
-    h += fieldHTML('MIDI trigger', `<div class="row"><span class="sig">${map ? esc(sigLabel(map.sig)) : '—'}</span><button class="ibtn allow-locked ${midiLearn && midiLearn.cueId === c.id ? 'learning' : ''}" data-act="learn">${midiLearn && midiLearn.cueId === c.id ? 'Press a key…' : 'Learn'}</button>${map ? '<button class="ibtn" data-act="unlearn">Clear</button>' : ''}</div>`, 'Fires this cue directly (standby does not move)');
+    const maps = cueMaps(c.id);
+    const learningCue = midiLearn && midiLearn.cueId === c.id;
+    h += fieldHTML('Trigger key', `<div class="row"><span class="sig">${maps.length ? esc(mapsLabel(maps)) : '—'}</span><button class="ibtn allow-locked ${learningCue ? 'learning' : ''}" data-act="learn">${learningCue ? 'Press a key or MIDI…' : 'Learn'}</button>${maps.length ? '<button class="ibtn allow-locked" data-act="unlearn">Clear</button>' : ''}</div>`, 'A computer key and/or a MIDI note that fires this cue directly (standby does not move)');
     h += `</div>`;
     h += `<div class="insp-actions"><button class="ibtn allow-locked" data-act="fire">▶ Fire this cue</button><button class="ibtn allow-locked" data-act="standby">Set as standby</button></div>`;
 
@@ -891,11 +891,10 @@
       case 'standby': setStandby(indexOf(c.id)); break;
       case 'learn':
         midiLearn = midiLearn && midiLearn.cueId === c.id ? null : { action: 'cue', cueId: c.id };
-        if (midiLearn && !midiAccess) toast('No MIDI devices found. Connect a MIDI controller first.', 'warn');
-        renderInspector(); break;
+        renderInspector(); renderPads(); break;
       case 'unlearn':
         settings.midiMap = settings.midiMap.filter(m => !(m.action === 'cue' && m.cueId === c.id));
-        saveSettings(); renderInspector(); break;
+        saveSettings(); renderInspector(); renderPads(); break;
     }
   }
 
@@ -1602,9 +1601,76 @@
   // ------------------------------------------------------------------ MIDI
   function sigLabel(sig) {
     if (!sig) return '—';
+    if (isKeySig(sig)) return `Key ${keyName(sig.slice(4))}`;
     const [t, ch, n] = sig.split(':');
     const names = { note: 'Note', cc: 'CC', pc: 'Prog' };
     return `${names[t] || t} ${n} · ch ${ch}`;
+  }
+
+  // Computer keyboard keys share the MIDI map as 'key:<KeyboardEvent.code>',
+  // so a pad (or GO etc.) can have a MIDI trigger and a keyboard key.
+  const isKeySig = (sig) => sig.startsWith('key:');
+  const KEY_RESERVED = {
+    Space: 'GO', Enter: 'GO', NumpadEnter: 'GO', Escape: 'Stop All', ArrowUp: 'Standby previous',
+    ArrowDown: 'Standby next', KeyP: 'Pause', Delete: 'Delete', Backspace: 'Delete', Tab: 'moving between boxes'
+  };
+  const MODIFIER_KEYS = ['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Fn'];
+  function keyName(code) {
+    let m;
+    if ((m = code.match(/^(?:Key|Digit)(.)$/))) return m[1];
+    if ((m = code.match(/^Numpad(.+)$/))) return `Num ${{ Add: '+', Subtract: '-', Multiply: '*', Divide: '/', Decimal: '.' }[m[1]] || m[1]}`;
+    const names = { Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']', Backslash: '\\', Semicolon: ';', Quote: "'",
+      Comma: ',', Period: '.', Slash: '/', Backquote: '`', ArrowLeft: '←', ArrowRight: '→', PageUp: 'Page Up', PageDown: 'Page Down' };
+    return names[code] || code;
+  }
+  // Labels for a cue's triggers, keyboard key first: "Key A + Note 60 · ch 1".
+  const cueMaps = (id) => settings.midiMap.filter(m => m.action === 'cue' && m.cueId === id)
+    .sort((a, b) => isKeySig(b.sig) - isKeySig(a.sig));
+  const mapsLabel = (maps) => maps.map(m => sigLabel(m.sig)).join(' + ');
+
+  // Save what was pressed (MIDI or keyboard) for the action being learned.
+  // A cue keeps one MIDI trigger and one keyboard key; learning one kind
+  // leaves the other alone.
+  function learnSig(sig) {
+    const key = isKeySig(sig);
+    if (midiLearn.action === 'master' && !sig.startsWith('cc:')) { toast('Master volume needs a CC fader or knob', 'warn'); return; }
+    settings.midiMap = settings.midiMap.filter(m => !(m.action === midiLearn.action && (m.cueId || null) === (midiLearn.cueId || null) && isKeySig(m.sig) === key));
+    let note = '';
+    if (midiLearn.action === 'cue') {
+      // One cue per key: a key learned for this cue is taken off any other cue.
+      const taken = settings.midiMap.filter(m => m.action === 'cue' && m.sig === sig).map(m => cueById(m.cueId)).filter(Boolean);
+      settings.midiMap = settings.midiMap.filter(m => !(m.action === 'cue' && m.sig === sig));
+      if (taken.length) note = ` (moved from cue ${taken.map(t => t.number).join(', ')})`;
+      const g = settings.midiMap.find(m => m.action !== 'cue' && m.sig === sig);
+      if (g) note += ` – note: this key also does ${MIDI_ACTIONS.find(a => a[0] === g.action)[1]}`;
+    }
+    settings.midiMap.push({ sig, action: midiLearn.action, cueId: midiLearn.cueId || null });
+    saveSettings();
+    const c = midiLearn.cueId && cueById(midiLearn.cueId);
+    toast(`Learned ${sigLabel(sig)}${c ? ` for ${c.number ? `cue ${c.number}` : displayName(c)}` : ''}${note}`);
+    midiLearn = null;
+    renderPads();
+    renderInspector();
+    if (!$('#settingsModal').classList.contains('hidden')) renderSettings();
+  }
+
+  function cancelLearn() {
+    midiLearn = null;
+    renderPads();
+    renderInspector();
+    if (!$('#settingsModal').classList.contains('hidden')) renderSettings();
+  }
+
+  // A keydown while learning: Esc cancels, a free key is learned. Returns true when used.
+  function learnKey(e) {
+    if (!midiLearn || MODIFIER_KEYS.includes(e.key)) return false;
+    e.preventDefault();
+    if (e.key === 'Escape') { cancelLearn(); return true; }
+    if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return true;
+    if (midiLearn.action === 'master') { toast('Master volume needs a CC fader or knob', 'warn'); return true; }
+    if (KEY_RESERVED[e.code]) { toast(`${keyName(e.code)} is already used for ${KEY_RESERVED[e.code]}. Pick another key.`, 'warn'); return true; }
+    learnSig(`key:${e.code}`);
+    return true;
   }
 
   async function initMidi() {
@@ -1646,27 +1712,7 @@
     if (!sig) return;
     flash('#midiPill');
 
-    if (midiLearn) {
-      if (midiLearn.action === 'master' && !sig.startsWith('cc:')) { toast('Master volume needs a CC fader or knob', 'warn'); return; }
-      settings.midiMap = settings.midiMap.filter(m => !(m.action === midiLearn.action && (m.cueId || null) === (midiLearn.cueId || null)));
-      let note = '';
-      if (midiLearn.action === 'cue') {
-        // One key per pad: a key learned for this cue is taken off any other cue.
-        const taken = settings.midiMap.filter(m => m.action === 'cue' && m.sig === sig).map(m => cueById(m.cueId)).filter(Boolean);
-        settings.midiMap = settings.midiMap.filter(m => !(m.action === 'cue' && m.sig === sig));
-        if (taken.length) note = ` (moved from cue ${taken.map(t => t.number).join(', ')})`;
-        const g = settings.midiMap.find(m => m.action !== 'cue' && m.sig === sig);
-        if (g) note += ` – note: this key also does ${MIDI_ACTIONS.find(a => a[0] === g.action)[1]}`;
-      }
-      settings.midiMap.push({ sig, action: midiLearn.action, cueId: midiLearn.cueId || null });
-      saveSettings();
-      toast(`Learned ${sigLabel(sig)}${note}`);
-      midiLearn = null;
-      renderPads();
-      renderInspector();
-      if (!$('#settingsModal').classList.contains('hidden')) renderSettings();
-      return;
-    }
+    if (midiLearn) { learnSig(sig); return; }
 
     for (const m of settings.midiMap) {
       if (m.sig !== sig) continue;
@@ -1749,7 +1795,7 @@
         <label>Status</label><span class="${httpStatus.ok ? '' : 'muted'}">${httpStatus.ok ? `On: http://localhost:${settings.httpPort}/go` : httpStatus.off ? 'Off' : `Not working: ${esc(httpStatus.error || '')}`}</span>
       </div>
       <p class="muted">On a Stream Deck, use the <b>Website</b> action with <b>Access in background</b> ticked. Addresses: <code>/go</code>, <code>/cue/3</code> (play cue 3), <code>/go/3</code>, <code>/stop</code>, <code>/panic</code>, <code>/pause</code>, <code>/resume</code>, <code>/next</code>, <code>/prev</code>, <code>/master/80</code>. Only this computer can send them.</p>
-      <h3>MIDI control</h3>
+      <h3>MIDI &amp; keyboard control</h3>
       <div class="settings-grid">
         <label>Listen to</label>
         <select id="sMidiIn">${[['all', 'All MIDI inputs'], ['none', 'Off'], ...inputs.map(n => [n, n])].map(([v, l]) => `<option value="${esc(v)}" ${v === settings.midiInput ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
@@ -1760,7 +1806,7 @@
           const m = settings.midiMap.find(x => x.action === a);
           const learning = midiLearn && midiLearn.action === a;
           return `<tr><td>${l}</td><td class="sig">${m ? esc(sigLabel(m.sig)) : '<span class="muted">—</span>'}</td>
-            <td style="text-align:right"><button class="ibtn ${learning ? 'learning' : ''}" data-learn="${a}">${learning ? 'Press a key…' : 'Learn'}</button> ${m ? `<button class="ibtn" data-unlearn="${a}">Clear</button>` : ''}</td></tr>`;
+            <td style="text-align:right"><button class="ibtn ${learning ? 'learning' : ''}" data-learn="${a}">${learning ? (a === 'master' ? 'Move a fader…' : 'Press a key or MIDI…') : 'Learn'}</button> ${m ? `<button class="ibtn" data-unlearn="${a}">Clear</button>` : ''}</td></tr>`;
         }).join('')}
         ${settings.midiMap.filter(m => m.action === 'cue').map(m => {
           const c = cueById(m.cueId);
@@ -1771,7 +1817,7 @@
         <label>Pressing a playing pad</label>
         <select id="sPadToggle"><option value="1" ${settings.padToggle ? 'selected' : ''}>Stops it (fades out)</option><option value="0" ${settings.padToggle ? '' : 'selected'}>Plays it again on top</option></select>
       </div>
-      <p class="muted">MIDI mappings are saved on this computer and work with any show. Per-cue triggers are set in the cue's Follow section, or with MIDI Learn in the Pads view. The pad setting also applies to a cue's MIDI key.</p>
+      <p class="muted">Learn accepts a MIDI note/button or a key on this computer's keyboard (Space, Enter, Esc, arrows, P and Delete are taken by the built-in shortcuts). Mappings are saved on this computer and work with any show. To give a pad its own key, right-click the pad, use <b>Map keys</b> in the Pads view, or <b>Learn</b> in the cue's Follow section. The pad setting above also applies to a cue's keys.</p>
       <h3>Updates</h3>
       <div class="settings-grid">
         <label>Installed version</label><span>${esc(appVersion || '–')}</span>
@@ -1820,7 +1866,6 @@
     if (b.id === 'sUnlock') { await AR.unlockLabels(); renderSettings(); renderInspector(); return; }
     if (b.dataset.learn) {
       midiLearn = midiLearn && midiLearn.action === b.dataset.learn ? null : { action: b.dataset.learn };
-      if (midiLearn && !midiAccess) toast('No MIDI available', 'warn');
       renderSettings(); return;
     }
     if (b.dataset.unlearn) { settings.midiMap = settings.midiMap.filter(m => m.action !== b.dataset.unlearn); saveSettings(); renderSettings(); return; }
@@ -2091,6 +2136,14 @@
         break;
     }
   });
+  // Right-click a pad to give it a key straight away, like MiX16 GO.
+  padGrid.addEventListener('contextmenu', (e) => {
+    const c = padCue(e.target);
+    if (!c) return;
+    e.preventDefault();
+    midiLearn = midiLearn && midiLearn.cueId === c.id ? null : { action: 'cue', cueId: c.id };
+    renderPads(); renderInspector();
+  });
   $$('.view-toggle button').forEach(b => b.addEventListener('click', blurAfter(() => setView(b.dataset.view))));
   $('#padLearnBtn').addEventListener('click', blurAfter(() => setPadLearn(!padLearn)));
   $('#padSmaller').addEventListener('click', blurAfter(() => setPadSize((settings.padSize || 100) - 10)));
@@ -2182,9 +2235,10 @@
 
   // keyboard
   document.addEventListener('keydown', (e) => {
-    if (wave && !e.ctrlKey && !e.metaKey && !e.altKey && wave.handleKey(e)) { e.preventDefault(); return; }
     const t = e.target;
     const typing = t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && !['checkbox', 'range', 'button'].includes(t.type)) || t.tagName === 'SELECT');
+    if (!typing && learnKey(e)) return;
+    if (wave && !e.ctrlKey && !e.metaKey && !e.altKey && wave.handleKey(e)) { e.preventDefault(); return; }
     if (e.key === 'Escape' && !$$('.modal').every(m => m.classList.contains('hidden'))) { closeModals(); return; }
     if (e.key === 'Escape' && padLearn) { e.preventDefault(); setPadLearn(false); return; }
     if (typing) {
@@ -2192,6 +2246,14 @@
       return;
     }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!KEY_RESERVED[e.code]) {
+      const hits = settings.midiMap.filter(m => m.sig === `key:${e.code}` && m.action !== 'master');
+      if (hits.length) {
+        e.preventDefault();
+        if (!e.repeat) { flash('#midiPill'); hits.forEach(m => runAction(m.action, m.cueId)); }
+        return;
+      }
+    }
     switch (e.key) {
       case ' ': case 'Enter':
         e.preventDefault();
