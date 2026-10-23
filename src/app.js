@@ -67,7 +67,7 @@
       oscEnabled: true, oscPort: 53000, fbHost: '', fbPort: 53001,
       httpEnabled: true, httpPort: 53000,
       midiInput: 'all', midiMap: [], autoUpdate: true,
-      view: 'list', padToggle: true
+      view: 'list', padToggle: true, padSize: 100
     };
     try { return Object.assign(def, JSON.parse(localStorage.getItem('showcue.settings') || '{}')); } catch (e) { return def; }
   }
@@ -291,6 +291,76 @@
     api.send('set-title', `${dirty ? '• ' : ''}${show.name || 'Untitled Show'} — Unique AV Show Cue`);
   }
 
+  // ------------------------------------------------------------------ renaming
+  // Double-click rename: the label turns into a text box. Enter or clicking
+  // away keeps the new name, Esc cancels. done() gets the text, or null on cancel.
+  function inlineRename(el, value, done) {
+    if (locked || !el || !el.isConnected) return;
+    const inp = document.createElement('input');
+    inp.className = 'inline-rename';
+    inp.value = value;
+    inp.spellcheck = false;
+    inp.style.width = Math.max(90, el.offsetWidth) + 'px';
+    const drag = el.closest('[draggable]');
+    if (drag) drag.setAttribute('draggable', 'false');
+    let finished = false;
+    const finish = (v) => { if (finished) return; finished = true; inp.classList.remove('inline-rename'); done(v, inp); };
+    inp.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
+      if (e.key === 'Escape') { e.preventDefault(); finish(null); }
+    });
+    // Wait a tick: the blur can come from the label's row being redrawn.
+    inp.addEventListener('blur', () => setTimeout(() => finish(inp.value)));
+    inp.addEventListener('dblclick', (e) => e.stopPropagation());
+    el.replaceWith(inp);
+    inp.focus();
+    inp.select();
+  }
+
+  function renameCue(c, el) {
+    inlineRename(el, displayName(c), (v) => {
+      if (v != null && v.trim() !== displayName(c)) {
+        // An empty name goes back to showing the file name.
+        c.name = v.trim();
+        markDirty();
+      }
+      refreshRow(c);
+      renderStandby();
+      if (c.id === selectedId) renderInspector();
+    });
+  }
+
+  function renameFolderInline(id, el) {
+    const f = folderById(id);
+    if (f) inlineRename(el, f.name, (v) => renameFolder(id, v == null ? f.name : v));
+  }
+
+  // The show file on disk, next to the show name. Double-click renames it.
+  function renderShowFile() {
+    const el = $('#showFile');
+    el.textContent = showPath ? api.basename(showPath) : 'Not saved yet';
+    el.classList.toggle('unsaved', !showPath);
+    el.title = showPath
+      ? `Show file: ${showPath}\nDouble-click to rename the file`
+      : 'This show has not been saved yet. Double-click to save it';
+  }
+
+  function renameShowFile() {
+    if (locked) return;
+    if (!showPath) { save(true); return; }
+    const el = $('#showFile');
+    const old = api.basename(showPath).replace(/\.showcue$/i, '');
+    inlineRename(el, old, async (v, inp) => {
+      if (inp.isConnected) inp.replaceWith(el);
+      if (v == null || !v.trim() || v.trim() === old) { renderShowFile(); return; }
+      const r = await api.invoke('show-rename', { path: showPath, name: v.trim() });
+      if (r && r.path) { showPath = r.path; toast(`Show file renamed to ${api.basename(r.path)}`); }
+      else toast((r && r.error) || 'Could not rename the show file', 'err');
+      renderShowFile();
+    });
+  }
+
   // ------------------------------------------------------------------ cue list rendering
   function outputLabel(c) {
     if (c.type === 'audio' || c.type === 'video') {
@@ -377,7 +447,7 @@
     const vol = c.volume == null ? 100 : c.volume;
     return `<div class="pad ${i === standby ? 'pad-standby' : ''} ${c.id === selectedId ? 'selected' : ''} ${isMissing ? 'missing' : ''} ${learning ? 'learning' : ''}"
         data-id="${c.id}" style="--pc:${c.color ? COLOR_HEX[c.color] : '#ff8a80'}" title="${esc(c.notes || displayName(c))}">
-      <div class="sp-name">${esc(displayName(c))}</div>
+      <div class="sp-name" title="Double-click to rename">${esc(displayName(c))}</div>
       <div class="sp-mid">
         <div class="sp-side"><span class="tag ${c.type}">${TYPES[c.type].tag}</span>${isMissing && hasFile ? '<span class="sp-warn" title="File missing">⚠</span>' : ''}</div>
         ${hasVolume(c)
@@ -403,7 +473,7 @@
     if (padTab !== 'all' && !(padTab === '' ? loose : folderById(padTab))) padTab = 'all';
     let tabs = '';
     if (show.folders.length) {
-      const tab = (id, label, n) => `<button class="pad-tab ${padTab === id ? 'on' : ''}" data-tab="${esc(id)}">${esc(label)} <small>${n}</small></button>`;
+      const tab = (id, label, n) => `<button class="pad-tab ${padTab === id ? 'on' : ''}" data-tab="${esc(id)}"${id && id !== 'all' ? ' title="Double-click to rename this folder"' : ''}>${esc(label)} <small>${n}</small></button>`;
       tabs = tab('all', 'All cues', show.cues.length)
         + (loose ? tab('', 'No folder', folderCues('').length) : '')
         + show.folders.map(f => tab(f.id, f.name, folderCues(f.id).length)).join('');
@@ -416,7 +486,7 @@
       while (i < show.cues.length && groupOf(show.cues[i]) === gid) { pads += padHTML(show.cues[i], i); i++; }
       if (padTab !== 'all' && padTab !== gid) return;
       if (!f && !pads) return;
-      if (f && padTab === 'all') h += `<div class="pad-folder" data-folder="${f.id}"><span class="f-name">${esc(f.name)}</span></div>`;
+      if (f && padTab === 'all') h += `<div class="pad-folder" data-folder="${f.id}"><span class="f-name" title="Double-click to rename">${esc(f.name)}</span></div>`;
       h += `<div class="pads">${pads || '<div class="pad-empty">No cues in this folder yet</div>'}</div>`;
     });
     const mv = show.masterVolume == null ? 100 : show.masterVolume;
@@ -426,6 +496,20 @@
         <div class="sp-vol" id="padMasterVal">${mv}%</div></div>`;
     box.classList.toggle('learn', padLearn);
     updatePlayingRows();
+  }
+
+  const PAD_MIN = 60, PAD_MAX = 200;
+  function setPadSize(v) {
+    settings.padSize = Math.max(PAD_MIN, Math.min(PAD_MAX, Math.round(v / 10) * 10 || 100));
+    saveSettings();
+    applyPadSize();
+  }
+  function applyPadSize() {
+    const s = settings.padSize || 100;
+    $('#padGrid').style.setProperty('--ps', s / 100);
+    $('#padSizeVal').textContent = s + '%';
+    $('#padSmaller').disabled = s <= PAD_MIN;
+    $('#padBigger').disabled = s >= PAD_MAX;
   }
 
   function setView(v) {
@@ -764,10 +848,12 @@
   function refreshRow(c, keepPad) {
     const i = indexOf(c.id);
     const tmp = document.createElement('div');
+    // A row or pad being renamed is redrawn when the rename finishes.
+    const busy = (el) => el && el.querySelector('.inline-rename');
     const pad = !keepPad && $(`.pad[data-id="${c.id}"]`);
-    if (pad) { tmp.innerHTML = padHTML(c, i); pad.replaceWith(tmp.firstElementChild); }
+    if (pad && !busy(pad)) { tmp.innerHTML = padHTML(c, i); pad.replaceWith(tmp.firstElementChild); }
     const old = $(`.cue-row[data-id="${c.id}"]`);
-    if (old) { tmp.innerHTML = rowHTML(c, i); old.replaceWith(tmp.firstElementChild); }
+    if (old && !busy(old)) { tmp.innerHTML = rowHTML(c, i); old.replaceWith(tmp.firstElementChild); }
     updatePlayingRows();
   }
 
@@ -1757,6 +1843,7 @@
     dirty = false;
     api.send('set-dirty', false);
     updateTitle();
+    renderShowFile();
     toast('Show saved');
     return true;
   }
@@ -1792,7 +1879,7 @@
     $('#showName').value = show.name;
     if (!show.mixer || typeof show.mixer !== 'object') show.mixer = {};
     setMaster(show.masterVolume == null ? 100 : show.masterVolume);
-    renderList(); renderInspector(); updateTitle();
+    renderList(); renderInspector(); updateTitle(); renderShowFile();
     renderMixer(true); sendMixer();
     if (missing.size) toast(`${missing.size} media file${missing.size > 1 ? 's are' : ' is'} missing – choose them again in the cue inspector`, 'warn');
   }
@@ -1803,7 +1890,7 @@
     show = newShow(); showPath = null; missing.clear(); standby = 0; selectedId = null; selectedFolderId = null;
     dirty = false; api.send('set-dirty', false);
     $('#showName').value = show.name;
-    setMaster(100); renderList(); renderInspector(); updateTitle();
+    setMaster(100); renderList(); renderInspector(); updateTitle(); renderShowFile();
     renderMixer(true); sendMixer();
   }
 
@@ -1929,8 +2016,8 @@
     }
     const r = e.target.closest('.cue-row');
     if (!r || locked) return;
-    const n = insp.querySelector('[data-key="name"]');
-    if (n) { n.focus(); n.select(); }
+    const c = cueById(r.dataset.id);
+    if (c) renameCue(c, r.querySelector('.name'));
   });
 
   // pads view
@@ -1964,12 +2051,18 @@
   });
   padGrid.addEventListener('dblclick', (e) => {
     if (e.target.id === 'padMaster') { setMaster(100); markDirty(); return; }
+    const tab = e.target.closest('.pad-tab');
+    if (tab) { if (folderById(tab.dataset.tab)) renameFolderInline(tab.dataset.tab, tab); return; }
+    const fh = e.target.closest('.pad-folder');
+    if (fh) { renameFolderInline(fh.dataset.folder, fh.querySelector('.f-name')); return; }
+    const nm = e.target.closest('.sp-name');
+    if (nm && padCue(nm)) { renameCue(padCue(nm), nm); return; }
     const c = e.target.classList.contains('sp-fader') && padCue(e.target);
     if (c) setCueVolume(c, 100, true);
   });
   padGrid.addEventListener('click', (e) => {
     const tab = e.target.closest('.pad-tab');
-    if (tab) { padTab = tab.dataset.tab; tab.blur(); renderPads(); return; }
+    if (tab) { if (padTab !== tab.dataset.tab) { padTab = tab.dataset.tab; renderPads(); } else tab.blur(); return; }
     const c = padCue(e.target);
     if (!c) return;
     const b = e.target.closest('button');
@@ -2000,6 +2093,16 @@
   });
   $$('.view-toggle button').forEach(b => b.addEventListener('click', blurAfter(() => setView(b.dataset.view))));
   $('#padLearnBtn').addEventListener('click', blurAfter(() => setPadLearn(!padLearn)));
+  $('#padSmaller').addEventListener('click', blurAfter(() => setPadSize((settings.padSize || 100) - 10)));
+  $('#padBigger').addEventListener('click', blurAfter(() => setPadSize((settings.padSize || 100) + 10)));
+  $('#padSizeVal').addEventListener('dblclick', () => setPadSize(100));
+  // Ctrl (Cmd on Mac) + mouse wheel over the pads also resizes them.
+  padGrid.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    setPadSize((settings.padSize || 100) + (e.deltaY < 0 ? 10 : -10));
+  }, { passive: false });
+  $('#showFile').addEventListener('dblclick', renameShowFile);
 
   // drag to reorder
   let dragId = null;
@@ -2217,6 +2320,8 @@
   (async function init() {
     initWave();
     setView(settings.view);
+    applyPadSize();
+    renderShowFile();
     $('#showName').value = show.name;
     await AR.refreshDevices();
     renderList(); renderInspector(); renderActive(); updateTitle();

@@ -317,6 +317,19 @@ ipcMain.handle('show-save', async (_e, { path: p, data, saveAs }) => {
   return target;
 });
 
+// Rename the show file on disk, in the same folder. The media paths stay valid
+// because they are stored relative to that folder.
+ipcMain.handle('show-rename', async (_e, { path: p, name }) => {
+  const base = String(name || '').replace(/\.showcue$/i, '').replace(/[\\/:*?"<>|]/g, '').trim();
+  if (!p || !base) return { error: 'Please type a file name' };
+  const target = path.join(path.dirname(p), base + '.showcue');
+  if (target === p) return { path: p };
+  if (fs.existsSync(target) && target.toLowerCase() !== p.toLowerCase()) return { error: `There is already a show file called "${base}.showcue" in that folder` };
+  try { fs.renameSync(p, target); } catch (e) { return { error: `Could not rename the show file: ${e.message}` }; }
+  app.addRecentDocument(target);
+  return { path: target };
+});
+
 ipcMain.handle('resolve-media', async (_e, { showPath, cues }) => {
   // Returns cue id -> resolved absolute path (or null if missing)
   const dir = showPath ? path.dirname(showPath) : null;
