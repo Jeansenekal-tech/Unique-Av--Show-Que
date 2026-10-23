@@ -41,7 +41,8 @@
   </header>
 
   <div class="toolbar">
-    <input id="showName" class="show-name" spellcheck="false" title="Show name">
+    <input id="showName" class="show-name" spellcheck="false" title="Show name (click to change)">
+    <span id="showFile" class="show-file"></span>
     <div class="sep"></div>
     <span class="tlabel">Add</span>
     <button class="add" data-type="audio">Audio</button>
@@ -59,6 +60,7 @@
     <button id="dupBtn" class="edit" title="Duplicate cue (Ctrl+D)">Duplicate</button>
     <button id="delBtn" class="edit danger" title="Delete cue (Del)">Delete</button>
     <div class="spacer"></div>
+    <span class="pad-size pad-only" title="Make the pads smaller or bigger (or Ctrl + mouse wheel over the pads)"><span class="tlabel">Pad size</span><button id="padSmaller">−</button><span id="padSizeVal">100%</span><button id="padBigger">+</button></span>
     <button id="padLearnBtn" class="pad-only" title="MIDI learn: click a pad, then press a key or pad on your MIDI controller. Click again (or Esc) when done.">MIDI Learn</button>
     <div class="view-toggle" title="Switch between the cue list and big pad buttons">
       <button data-view="list">☰ List</button><button data-view="pads">▦ Pads</button>
@@ -152,6 +154,7 @@
         <h3>Pads view</h3>
         <table>
           <tr><td>▦ Pads (toolbar)</td><td>Show every cue as a channel strip with a volume fader. Click the numbered button to play; click it again while it plays to stop it. Folders are the tabs along the top</td></tr>
+          <tr><td>Pad size − / +</td><td>Make the pads smaller or bigger (Ctrl + mouse wheel works too). Double-click the % to reset</td></tr>
           <tr><td>MIDI Learn</td><td>Click a pad, then press a key or pad on your MIDI controller. ✕ on a pad clears its key</td></tr>
           <tr><td><kbd>Esc</kbd> during MIDI Learn</td><td>Finish learning</td></tr>
         </table>
@@ -161,8 +164,16 @@
           <tr><td>+ Folder</td><td>Make a new folder (set) after the one you're in</td></tr>
           <tr><td>Drag a cue onto a folder bar</td><td>Put the cue in that folder</td></tr>
           <tr><td>▾ / ▸ on the folder bar</td><td>Close / open the folder</td></tr>
-          <tr><td>Double-click the folder name</td><td>Rename it</td></tr>
+          <tr><td>Double-click the folder name</td><td>Rename it (works on the folder tabs in Pads view too)</td></tr>
         </table>
+        <h3>Renaming</h3>
+        <table>
+          <tr><td>Double-click a cue's name</td><td>Rename the song or cue, in the list or on a pad. Leave it empty to use the file name</td></tr>
+          <tr><td>Double-click a folder name or tab</td><td>Rename the folder (set)</td></tr>
+          <tr><td>Click the show name (top left)</td><td>Change the show's name</td></tr>
+          <tr><td>Double-click the file name next to it</td><td>Rename the show file on disk</td></tr>
+        </table>
+        <p class="muted">Press <kbd>Enter</kbd> to keep a new name or <kbd>Esc</kbd> to cancel. Renaming is off while the show is locked.</p>
         <p class="muted">GO runs straight through: when one folder's last cue has played, the next folder's first cue is on standby.</p>
         <h3>Waveform (click it first)</h3>
         <table>
