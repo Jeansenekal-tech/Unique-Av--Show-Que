@@ -458,6 +458,8 @@ function buildMenu() {
         { label: 'Open Output Window', accelerator: 'CmdOrCtrl+Shift+O', click: send('output-open') },
         { label: 'Close Output Window', click: send('output-close') },
         { type: 'separator' },
+        { label: 'MIDI Patch…', accelerator: 'CmdOrCtrl+Shift+M', click: send('midi-patch') },
+        { type: 'separator' },
         ...(isMac ? [] : [{ label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: send('settings') }, { type: 'separator' }]),
         { role: 'togglefullscreen' },
         { role: 'toggleDevTools' }

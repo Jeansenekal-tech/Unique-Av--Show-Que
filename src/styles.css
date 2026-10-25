@@ -390,6 +390,30 @@ body.has-wave { grid-template-rows: auto auto minmax(0, 1fr) auto clamp(120px, 2
 .settings-grid .row { display: flex; gap: 8px; align-items: center; }
 .sig { font-family: var(--mono); color: #b9d8ff; }
 
+/* ---------- MIDI patch ---------- */
+.modal-box.midi-box { width: 860px; max-width: calc(100vw - 32px); }
+.mp-warn { color: #ff8b75; }
+.mp-sub { text-transform: none; letter-spacing: 0; font-weight: 400; color: #4d5462; margin-left: 8px; }
+.mp-devs { display: flex; flex-wrap: wrap; gap: 6px; }
+.mp-dev { display: inline-flex; align-items: center; gap: 6px; background: var(--panel2); border: 1px solid var(--line); border-radius: 14px; padding: 2px 10px; color: var(--muted); }
+.mp-dev i { width: 8px; height: 8px; border-radius: 50%; background: #444b57; }
+.mp-dev.on { color: var(--text); }
+.mp-dev.on i { background: var(--go-hi); }
+.mp-dev.out.on i { background: var(--accent); }
+.mp-table td.r { text-align: right; white-space: nowrap; }
+.mp-table td.sig, .mp-table td.muted { white-space: nowrap; }
+.mp-table td.mp-num { font-family: var(--mono); color: var(--muted); width: 40px; }
+.mp-table td.mp-name { width: 100%; white-space: normal; }
+.mp-type { font: 600 10px var(--mono); color: var(--muted); background: var(--panel2); border-radius: 3px; padding: 1px 4px; margin-right: 8px; }
+.mp-missing { color: #ff8b75; white-space: nowrap; }
+.mp-clear { float: right; text-transform: none; letter-spacing: 0; font-size: 12px; padding: 1px 8px; }
+.mp-mon { font: 12px var(--mono); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; height: 150px; overflow-y: auto; }
+.mp-row { display: grid; grid-template-columns: 70px minmax(80px, 180px) 170px 1fr; gap: 10px; padding: 1px 0; }
+.mp-port { color: #c3c8d3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mp-did { color: var(--go-hi); }
+button.pill { cursor: pointer; }
+button.pill:hover { border-color: var(--accent); }
+
 /* ---------- toasts ---------- */
 .toasts { position: fixed; right: 14px; bottom: 210px; display: flex; flex-direction: column; gap: 6px; z-index: 60; }
 .toast { background: #2b303a; border: 1px solid #3a404c; border-left: 4px solid var(--accent); padding: 8px 12px; border-radius: 6px; max-width: 380px; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
