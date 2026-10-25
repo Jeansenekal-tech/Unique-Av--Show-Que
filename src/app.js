@@ -48,6 +48,7 @@
   let midiLearn = null;
   let padLearn = false; // pads view: clicking a pad arms MIDI learn instead of playing it
   const ccLast = {};
+  const midiLog = []; // newest first, for the MIDI Patch monitor
   let oscStatus = { ok: false };
   let httpStatus = { ok: false };
   let settings = loadSettings();
@@ -1610,7 +1611,7 @@
   async function initMidi() {
     try {
       midiAccess = await navigator.requestMIDIAccess({ sysex: false });
-      midiAccess.onstatechange = () => { bindMidi(); updateMidiPill(); if (!$('#settingsModal').classList.contains('hidden')) renderSettings(); };
+      midiAccess.onstatechange = () => { bindMidi(); updateMidiPill(); refreshMidiViews(); };
       bindMidi();
     } catch (e) { midiAccess = null; }
     updateMidiPill();
@@ -1662,19 +1663,150 @@
       saveSettings();
       toast(`Learned ${sigLabel(sig)}${note}`);
       midiLearn = null;
+      logMidi(e, sig, val, `Learned for ${learnTarget(sig)}`);
       renderPads();
       renderInspector();
-      if (!$('#settingsModal').classList.contains('hidden')) renderSettings();
+      refreshMidiViews();
       return;
     }
 
+    const did = [];
     for (const m of settings.midiMap) {
       if (m.sig !== sig) continue;
-      if (m.action === 'master') { if (val != null) setMaster((val / 127) * 100); continue; }
+      if (m.action === 'master') { if (val != null) { setMaster((val / 127) * 100); did.push(`Master ${Math.round((val / 127) * 100)}`); } continue; }
       if (!trigger) continue;
       runAction(m.action, m.cueId);
+      did.push(mapLabel(m));
     }
+    logMidi(e, sig, val, did.join(', '));
   }
+
+  // What a mapping does, in words.
+  function mapLabel(m) {
+    if (m.action === 'cue') { const c = cueById(m.cueId); return c ? `Cue ${c.number} ${displayName(c)}` : 'Deleted cue'; }
+    const a = MIDI_ACTIONS.find(x => x[0] === m.action);
+    return a ? a[1] : m.action;
+  }
+  function learnTarget(sig) {
+    const m = settings.midiMap.find(x => x.sig === sig);
+    return m ? mapLabel(m) : '';
+  }
+
+  function logMidi(e, sig, val, did) {
+    const t = new Date();
+    midiLog.unshift({
+      time: t.toTimeString().slice(0, 8),
+      port: (e.target && e.target.name) || '',
+      sig, val, did
+    });
+    if (midiLog.length > 40) midiLog.length = 40;
+    if (!$('#midiModal').classList.contains('hidden')) renderMidiMonitor();
+  }
+
+  function refreshMidiViews() {
+    if (!$('#settingsModal').classList.contains('hidden')) renderSettings();
+    if (!$('#midiModal').classList.contains('hidden')) renderMidiPatch();
+  }
+
+  // ------------------------------------------------------------------ MIDI patch window
+  const MIDI_MSG = { note: 'Note On', noteoff: 'Note Off', cc: 'CC', pc: 'Program' };
+  function midiOutText(c) {
+    const d1 = c.msg === 'pc' ? `${c.data1}` : `${c.data1}`;
+    const d2 = c.msg === 'pc' || c.msg === 'noteoff' ? '' : ` · ${c.msg === 'cc' ? 'value' : 'vel'} ${c.data2}`;
+    return `${MIDI_MSG[c.msg] || c.msg} ${d1}${d2} · ch ${c.channel || 1}`;
+  }
+
+  function renderMidiPatch() {
+    const ins = midiAccess ? Array.from(midiAccess.inputs.values()) : [];
+    const outs = midiAccess ? Array.from(midiAccess.outputs.values()) : [];
+    const listening = (name) => settings.midiInput === 'all' || settings.midiInput === name;
+    const learnBtn = (attr, on) => `<button class="ibtn ${on ? 'learning' : ''}" ${attr}>${on ? 'Press a key…' : 'Learn'}</button>`;
+    const cues = show.cues.filter(c => c.type !== 'folder');
+    const midiCues = cues.filter(c => c.type === 'midi');
+
+    $('#midiBody').innerHTML = `
+      ${midiAccess ? '' : '<p class="mp-warn">MIDI is not available on this computer.</p>'}
+      <h3>Devices</h3>
+      <div class="settings-grid">
+        <label>Listen to</label>
+        <select id="mListen">${[['all', 'All MIDI inputs'], ['none', 'Off'], ...ins.map(i => [i.name, i.name])].map(([v, l]) => `<option value="${esc(v)}" ${v === settings.midiInput ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+        <label>Inputs (control in)</label>
+        <div class="mp-devs">${ins.length ? ins.map(i => `<span class="mp-dev ${listening(i.name) ? 'on' : ''}" title="${listening(i.name) ? 'Listening' : 'Ignored'}"><i></i>${esc(i.name)}</span>`).join('') : '<span class="muted">None connected</span>'}</div>
+        <label>Outputs (MIDI cues)</label>
+        <div class="mp-devs">${outs.length ? outs.map(o => `<span class="mp-dev on out"><i></i>${esc(o.name)}</span>`).join('') : '<span class="muted">None connected</span>'}</div>
+      </div>
+
+      <h3>Show controls</h3>
+      <table class="mp-table">
+        ${MIDI_ACTIONS.map(([a, l]) => {
+          const m = settings.midiMap.find(x => x.action === a);
+          return `<tr><td>${l}</td><td class="sig">${m ? esc(sigLabel(m.sig)) : '<span class="muted">—</span>'}</td>
+            <td class="r">${learnBtn(`data-learn="${a}"`, midiLearn && midiLearn.action === a)} ${m ? `<button class="ibtn" data-unlearn="${a}">Clear</button>` : ''}</td></tr>`;
+        }).join('')}
+      </table>
+
+      <h3>Cue triggers <span class="mp-sub">a key fires the cue directly; standby does not move</span></h3>
+      ${cues.length ? `<table class="mp-table">
+        ${cues.map(c => {
+          const m = settings.midiMap.find(x => x.action === 'cue' && x.cueId === c.id);
+          const on = midiLearn && midiLearn.action === 'cue' && midiLearn.cueId === c.id;
+          return `<tr><td class="mp-num">${esc(c.number)}</td><td class="mp-name"><span class="mp-type">${esc((TYPES[c.type] || {}).tag || c.type)}</span>${esc(displayName(c))}</td>
+            <td class="sig">${m ? esc(sigLabel(m.sig)) : '<span class="muted">—</span>'}</td>
+            <td class="r">${learnBtn(`data-learn-cue="${c.id}"`, on)} ${m ? `<button class="ibtn" data-unlearn-cue="${c.id}">Clear</button>` : ''}</td></tr>`;
+        }).join('')}
+      </table>` : '<p class="muted">No cues in this show yet.</p>'}
+
+      <h3>MIDI sent by cues</h3>
+      ${midiCues.length ? `<table class="mp-table">
+        ${midiCues.map(c => {
+          const port = c.port || (outs[0] ? outs[0].name : '');
+          const missing = c.port ? !outs.some(o => o.name === c.port) : !outs.length;
+          return `<tr><td class="mp-num">${esc(c.number)}</td><td class="mp-name">${esc(displayName(c))}</td>
+            <td class="sig">${esc(midiOutText(c))}</td>
+            <td class="${missing ? 'mp-missing' : 'muted'}">→ ${esc(port || 'no output')}${missing && c.port ? ' (not connected)' : ''}${c.port ? '' : ' <span class="muted">(first)</span>'}</td>
+            <td class="r"><button class="ibtn" data-test-cue="${c.id}">Send</button> <button class="ibtn" data-edit-cue="${c.id}">Edit</button></td></tr>`;
+        }).join('')}
+      </table>` : '<p class="muted">No MIDI cues. Add one with the MIDI button in the toolbar to send notes, CCs or program changes.</p>'}
+
+      <h3>Monitor <span class="mp-sub">incoming MIDI</span><button class="ibtn mp-clear" id="mClearLog">Clear</button></h3>
+      <div id="midiMon" class="mp-mon"></div>
+      <p class="muted">MIDI mappings are saved on this computer and work with any show. Press a key on your controller and it shows up in the monitor with what it did.</p>`;
+    renderMidiMonitor();
+  }
+
+  function renderMidiMonitor() {
+    const el = $('#midiMon');
+    if (!el) return;
+    el.innerHTML = midiLog.length
+      ? midiLog.map(l => `<div class="mp-row"><span class="muted">${l.time}</span><span class="mp-port">${esc(l.port)}</span><span class="sig">${esc(sigLabel(l.sig))}${l.val != null ? ` = ${l.val}` : ''}</span><span class="${l.did ? 'mp-did' : 'muted'}">${esc(l.did || 'not patched')}</span></div>`).join('')
+      : '<div class="muted">Waiting for MIDI…</div>';
+  }
+
+  $('#midiBody').addEventListener('change', (e) => {
+    if (e.target.id === 'mListen') { settings.midiInput = e.target.value; bindMidi(); updateMidiPill(); saveSettings(); renderMidiPatch(); }
+  });
+
+  $('#midiBody').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const d = b.dataset;
+    if (b.id === 'mClearLog') { midiLog.length = 0; renderMidiMonitor(); return; }
+    if (d.learn) {
+      midiLearn = midiLearn && midiLearn.action === d.learn ? null : { action: d.learn, fromPatch: true };
+    } else if (d.learnCue) {
+      midiLearn = midiLearn && midiLearn.cueId === d.learnCue ? null : { action: 'cue', cueId: d.learnCue, fromPatch: true };
+    } else if (d.unlearn) {
+      settings.midiMap = settings.midiMap.filter(m => m.action !== d.unlearn); saveSettings();
+    } else if (d.unlearnCue) {
+      settings.midiMap = settings.midiMap.filter(m => !(m.action === 'cue' && m.cueId === d.unlearnCue)); saveSettings(); renderPads(); renderInspector();
+    } else if (d.testCue) {
+      const c = cueById(d.testCue); if (c) sendMidiCue(c); return;
+    } else if (d.editCue) {
+      closeModals(); select(d.editCue); return;
+    } else return;
+    if ((d.learn || d.learnCue) && midiLearn && !midiAccess) toast('No MIDI devices found. Connect a MIDI controller first.', 'warn');
+    renderMidiPatch();
+  });
 
   function runAction(action, cueId) {
     switch (action) {
@@ -1755,23 +1887,14 @@
         <select id="sMidiIn">${[['all', 'All MIDI inputs'], ['none', 'Off'], ...inputs.map(n => [n, n])].map(([v, l]) => `<option value="${esc(v)}" ${v === settings.midiInput ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
         <label>Inputs found</label><span class="muted">${midiAccess ? (inputs.length ? esc(inputs.join(', ')) : 'None connected') : 'MIDI not available'}</span>
       </div>
-      <table style="margin-top:10px">
-        ${MIDI_ACTIONS.map(([a, l]) => {
-          const m = settings.midiMap.find(x => x.action === a);
-          const learning = midiLearn && midiLearn.action === a;
-          return `<tr><td>${l}</td><td class="sig">${m ? esc(sigLabel(m.sig)) : '<span class="muted">—</span>'}</td>
-            <td style="text-align:right"><button class="ibtn ${learning ? 'learning' : ''}" data-learn="${a}">${learning ? 'Press a key…' : 'Learn'}</button> ${m ? `<button class="ibtn" data-unlearn="${a}">Clear</button>` : ''}</td></tr>`;
-        }).join('')}
-        ${settings.midiMap.filter(m => m.action === 'cue').map(m => {
-          const c = cueById(m.cueId);
-          return c ? `<tr><td>Fire cue ${esc(c.number)} – ${esc(displayName(c))}</td><td class="sig">${esc(sigLabel(m.sig))}</td><td style="text-align:right"><button class="ibtn" data-unlearn-cue="${m.cueId}">Clear</button></td></tr>` : '';
-        }).join('')}
-      </table>
+      <div class="settings-grid" style="margin-top:8px">
+        <label>Mappings</label><div class="row"><button class="ibtn" id="sMidiPatch">Open MIDI Patch…</button><span class="muted">${settings.midiMap.length} mapped</span></div>
+      </div>
       <div class="settings-grid" style="margin-top:10px">
         <label>Pressing a playing pad</label>
         <select id="sPadToggle"><option value="1" ${settings.padToggle ? 'selected' : ''}>Stops it (fades out)</option><option value="0" ${settings.padToggle ? '' : 'selected'}>Plays it again on top</option></select>
       </div>
-      <p class="muted">MIDI mappings are saved on this computer and work with any show. Per-cue triggers are set in the cue's Follow section, or with MIDI Learn in the Pads view. The pad setting also applies to a cue's MIDI key.</p>
+      <p class="muted">The MIDI Patch window (click MIDI in the top bar) shows every control and cue with its MIDI key, the MIDI your cues send, and a live monitor. The pad setting also applies to a cue's MIDI key.</p>
       <h3>Updates</h3>
       <div class="settings-grid">
         <label>Installed version</label><span>${esc(appVersion || '–')}</span>
@@ -1814,6 +1937,7 @@
       setTimeout(() => api.send('output-cmd', { cmd: { cmd: 'identify' } }), outputOpen ? 0 : 900);
       return;
     }
+    if (b.id === 'sMidiPatch') { closeModals(); openModal('#midiModal'); return; }
     if (b.id === 'sUpdCheck') { checkUpdates(); return; }
     if (b.id === 'sUpdInstall') { installUpdate(); return; }
     if (b.id === 'sTone') { const w = await AR.testTone(settings.defaultDevice, settings.defaultRoute); if (w) toast(w, 'warn'); return; }
@@ -1827,8 +1951,8 @@
     if (b.dataset.unlearnCue) { settings.midiMap = settings.midiMap.filter(m => !(m.action === 'cue' && m.cueId === b.dataset.unlearnCue)); saveSettings(); renderSettings(); renderInspector(); }
   });
 
-  function openModal(id) { $(id).classList.remove('hidden'); if (id === '#settingsModal') renderSettings(); }
-  function closeModals() { $$('.modal').forEach(m => m.classList.add('hidden')); if (midiLearn && !midiLearn.cueId) midiLearn = null; }
+  function openModal(id) { $(id).classList.remove('hidden'); if (id === '#settingsModal') renderSettings(); if (id === '#midiModal') renderMidiPatch(); }
+  function closeModals() { $$('.modal').forEach(m => m.classList.add('hidden')); if (midiLearn && (!midiLearn.cueId || midiLearn.fromPatch)) { midiLearn = null; renderPads(); renderInspector(); } }
   $$('.modal').forEach(m => m.addEventListener('mousedown', (e) => { if (e.target === m || e.target.closest('[data-close]')) closeModals(); }));
 
   // ------------------------------------------------------------------ files
@@ -1937,6 +2061,7 @@
       case 'output-close': api.send('output-close'); break;
       case 'settings': openModal('#settingsModal'); break;
       case 'help': openModal('#helpModal'); break;
+      case 'midi-patch': closeModals(); openModal('#midiModal'); break;
       case 'check-updates': openModal('#settingsModal'); checkUpdates(); break;
     }
   });
@@ -1953,6 +2078,7 @@
   $('#outBtn').addEventListener('click', blurAfter(() => outputOpen ? api.send('output-close') : api.send('output-open', settings.outputDisplay)));
   $('#lockBtn').addEventListener('click', blurAfter(() => setLocked(!locked)));
   $('#settingsBtn').addEventListener('click', blurAfter(() => openModal('#settingsModal')));
+  $('#midiPill').addEventListener('click', blurAfter(() => openModal('#midiModal')));
   $('#updPill').addEventListener('click', blurAfter(() => { if (upd.state === 'ready' || upd.state === 'available') installUpdate(); else openModal('#settingsModal'); }));
   $('#upBtn').addEventListener('click', blurAfter(() => moveSelected(-1)));
   $('#downBtn').addEventListener('click', blurAfter(() => moveSelected(1)));
