@@ -1626,13 +1626,15 @@
     if (!sig) return '—';
     if (isKeySig(sig)) return `Key ${keyName(sig.slice(4))}`;
     const [t, ch, n] = sig.split(':');
-    const names = { note: 'Note', cc: 'CC', pc: 'Prog' };
+    if (t === 'pb') return `Pitch Wheel · ch ${ch}`;
+    const names = { note: 'Note', noteoff: 'Note Off', cc: 'CC', pc: 'Prog' };
     return `${names[t] || t} ${n} · ch ${ch}`;
   }
 
   // Computer keyboard keys share the MIDI map as 'key:<KeyboardEvent.code>',
   // so a pad (or GO etc.) can have a MIDI trigger and a keyboard key.
   const isKeySig = (sig) => sig.startsWith('key:');
+  const isFaderSig = (sig) => sig.startsWith('cc:') || sig.startsWith('pb:');
   const KEY_RESERVED = {
     Space: 'GO', Enter: 'GO', NumpadEnter: 'GO', Escape: 'Stop All', ArrowUp: 'Standby previous',
     ArrowDown: 'Standby next', KeyP: 'Pause', Delete: 'Delete', Backspace: 'Delete', Tab: 'moving between boxes'
@@ -1656,7 +1658,7 @@
   // leaves the other alone.
   function learnSig(sig) {
     const key = isKeySig(sig);
-    if (midiLearn.action === 'master' && !sig.startsWith('cc:')) { toast('Master volume needs a CC fader or knob', 'warn'); return; }
+    if (midiLearn.action === 'master' && !isFaderSig(sig)) { toast('Master volume needs a CC fader or knob (or the pitch wheel)', 'warn'); return; }
     settings.midiMap = settings.midiMap.filter(m => !(m.action === midiLearn.action && (m.cueId || null) === (midiLearn.cueId || null) && isKeySig(m.sig) === key));
     let note = '';
     if (midiLearn.action === 'cue') {
@@ -1726,7 +1728,14 @@
     const st = d[0] & 0xf0, ch = (d[0] & 0x0f) + 1;
     let sig = null, val = null, trigger = false;
     if (st === 0x90 && d[2] > 0) { sig = `note:${ch}:${d[1]}`; trigger = true; }
-    else if (st === 0xB0) {
+    else if (st === 0x80 || st === 0x90) { sig = `noteoff:${ch}:${d[1]}`; trigger = true; }
+    else if (st === 0xE0) {
+      // Pitch wheel: works as a fader (top 7 bits) and triggers when pushed up past the middle.
+      sig = `pb:${ch}:0`; val = d[2];
+      const prev = ccLast[sig] == null ? 64 : ccLast[sig];
+      trigger = prev < 96 && val >= 96;
+      ccLast[sig] = val;
+    } else if (st === 0xB0) {
       sig = `cc:${ch}:${d[1]}`; val = d[2];
       const prev = ccLast[sig] == null ? 0 : ccLast[sig];
       trigger = prev < 64 && val >= 64;
@@ -1775,7 +1784,7 @@
   };
   const editorOpen = () => !$('#midiModal').classList.contains('hidden');
   const FADER_ACTIONS = ['master', 'cue-volume'];
-  const MIDI_KIND = { note: 'Note On', noteoff: 'Note Off', cc: 'Control Change', pc: 'Program Change', key: 'Computer Key' };
+  const MIDI_KIND = { note: 'Note On', noteoff: 'Note Off', pb: 'Pitch Wheel', cc: 'Control Change', pc: 'Program Change', key: 'Computer Key' };
   const GENERAL_ROWS = [
     ['go', 'Playlist', 'Go', '/showcue/go'], ['stop-all', 'Playlist', 'Stop All', '/showcue/stopall'],
     ['panic', 'Playlist', 'Panic', '/showcue/panic'], ['pause-all', 'Playlist', 'Pause / Resume', '/showcue/pauseall · resumeall'],
@@ -1804,7 +1813,7 @@
   function sigCells(sig, fader) {
     if (sig.startsWith('key:')) return ['Computer Key', '', keyName(sig.slice(4)), ''];
     const [t, ch, n] = sig.split(':');
-    return [MIDI_KIND[t] || t, ch, n, fader ? '(0-127)' : ''];
+    return [MIDI_KIND[t] || t, ch, t === 'pb' ? '' : n, fader ? '(0-127)' : ''];
   }
   function rowCells(r) {
     if (r.dir === 'OUT') {
@@ -1908,7 +1917,8 @@
   }
 
   function editorMessage(sig, val) {
-    ed.msg = { sig, val };
+    if (sig.startsWith('noteoff:') && ed.msg && ed.msg.sig === 'note:' + sig.slice(8)) return;
+    ed.msg = { sig, val, fresh: true };
     renderEditorMsg();
     renderEditorRows();
   }
@@ -1917,6 +1927,7 @@
   // become the message to assign (built-in shortcuts are left alone).
   function editorKey(e) {
     if (e.key === 'Escape') return false;
+    if (!$('#meManual').classList.contains('hidden')) { if (e.key === 'Enter') { e.preventDefault(); setupAssign(); } return true; }
     e.preventDefault();
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { moveEditorSel(e.key === 'ArrowDown' ? 1 : -1); return true; }
     if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || MODIFIER_KEYS.includes(e.key)) return true;
@@ -1946,20 +1957,21 @@
     let changedCue = false, skipped = 0;
     for (const r of rows) {
       if (r.dir === 'OUT') {
-        if (isKey) { skipped++; continue; }
+        if (isKey || sig.startsWith('pb:')) { skipped++; continue; }
         const [t, ch, n] = sig.split(':');
         Object.assign(r.cue, { msg: t, channel: Number(ch), data1: Number(n) });
         if (t === 'cc' && val != null) r.cue.data2 = val;
         refreshRow(r.cue); changedCue = true;
         continue;
       }
-      if (FADER_ACTIONS.includes(r.action) && !sig.startsWith('cc:')) { skipped++; continue; }
+      if (FADER_ACTIONS.includes(r.action) && !isFaderSig(sig)) { skipped++; continue; }
       settings.midiMap = settings.midiMap.filter(m => !(m.action === r.action && (m.cueId || null) === (r.cueId || null) && isKeySig(m.sig) === isKey));
       settings.midiMap.push({ sig, action: r.action, cueId: r.cueId || null });
     }
     saveSettings();
     if (changedCue) { markDirty(); renderInspector(); }
-    if (skipped) toast(isKey ? 'MIDI cues and volume rows need a MIDI message, not a computer key' : 'Volume rows need a CC fader or knob', 'warn');
+    if (skipped) toast(isKey ? 'MIDI cues and volume rows need a MIDI message, not a computer key' : 'Volume rows need a CC fader or knob (or the pitch wheel); MIDI cues can’t send pitch wheel', 'warn');
+    if (ed.msg) ed.msg.fresh = false; // used up: the next Setup starts from the row
     renderPads(); renderInspector();
     renderEditorRows(); renderEditorMsg();
   }
@@ -1974,21 +1986,76 @@
     renderEditorRows(); renderEditorMsg();
   }
 
+  // "MIDI Message Setup", like MiX16's: opened by Assign Manually… or a double-click.
+  const SETUP_KINDS = [['noteoff', 'Note Off'], ['note', 'Note On'], ['pb', 'Pitch Wheel'], ['cc', 'Control Msg.'], ['pc', 'Program Chg.']];
   function showManual(open) {
     const box = $('#meManual');
     if (!open) { box.classList.add('hidden'); return; }
-    const m = ed.msg && !ed.msg.sig.startsWith('key:') ? ed.msg.sig.split(':') : ['note', '1', '60'];
-    box.innerHTML = `<div class="me-manual-box">
-      <div class="me-manual-title">Assign Manually</div>
-      <div class="settings-grid">
-        <label>MIDI Action</label><select id="mmType">${['note', 'cc', 'pc'].map(t => `<option value="${t}" ${t === m[0] ? 'selected' : ''}>${MIDI_KIND[t]}</option>`).join('')}</select>
-        <label>MIDI Ch.</label><input id="mmCh" type="number" min="1" max="16" value="${esc(m[1])}">
-        <label>MIDI Id (note / CC / program)</label><input id="mmId" type="number" min="0" max="127" value="${esc(m[2])}">
+    const rows = selectedRows();
+    const one = rows.length === 1 ? rows[0] : null;
+    const out = rows.some(r => r.dir === 'OUT');
+    // Start from: the message just learned, else what the row already has, else Note On 1 / 0.
+    let start = ed.msg && ed.msg.fresh && !isKeySig(ed.msg.sig) ? ed.msg.sig : null;
+    if (!start && one && one.dir === 'IN') { const m = rowMaps(one).find(x => !isKeySig(x.sig)); if (m) start = m.sig; }
+    if (!start && one && one.dir === 'OUT') start = `${one.cue.msg}:${one.cue.channel || 1}:${one.cue.data1 || 0}`;
+    const [t0, ch0, id0] = (start || 'note:1:0').split(':');
+    const fader = rows.some(r => FADER_ACTIONS.includes(r.action));
+    const val0 = one && one.dir === 'OUT' ? (one.cue.data2 == null ? 127 : one.cue.data2) : 127;
+    const label = one ? `${one.dir}: ${one.type}${one.no ? ' ' + one.no : ''} ${one.act}` : `${rows.length} rows selected`;
+    const step = (target, by, title) => `<span class="ms-step" title="${title}"><button data-step="${target}" data-by="${by}">▲</button><button data-step="${target}" data-by="${-by}">▼</button></span>`;
+    box.innerHTML = `<div class="me-manual-box ms-box">
+      <div class="ms-title">MIDI Message Setup</div>
+      <div class="ms-grid">
+        <label>Channel:</label><div class="ms-chan">${esc(label)}</div>
+        <label>MIDI Action:</label>
+        <div class="ms-seg" id="msKind">${SETUP_KINDS.map(([k, l]) => {
+          const off = (out && k === 'pb') || (fader && !['cc', 'pb'].includes(k));
+          return `<button data-kind="${k}" class="${k === t0 ? 'on' : ''}" ${off ? 'disabled' : ''} title="${off ? (out ? 'MIDI cues can’t send pitch wheel' : 'Volume needs a fader: Control Msg. or Pitch Wheel') : ''}">${l}</button>`;
+        }).join('')}</div>
+        <label>MIDI Channel:</label><div class="ms-row"><input id="msCh" type="number" min="1" max="16" value="${esc(ch0)}">${step('msCh', 1, 'Channel up / down')}</div>
+        <label>MIDI Id:</label><div class="ms-row"><input id="msId" type="number" min="0" max="127" value="${esc(id0)}">${step('msId', 1, 'Up / down by 1')}<span class="ms-x">x1</span>${step('msId', 10, 'Up / down by 10')}<span class="ms-x">x10</span><span class="ms-hint" id="msIdHint"></span></div>
+        ${out ? `<label>MIDI Val:</label><div class="ms-row"><input id="msVal" type="number" min="0" max="127" value="${esc(val0)}">${step('msVal', 1, 'Up / down by 1')}<span class="ms-x">x1</span>${step('msVal', 10, 'Up / down by 10')}<span class="ms-x">x10</span></div>` : ''}
+        <label class="ms-note-l">Note:</label><input id="msNote" class="ms-note" spellcheck="false" value="${esc(one ? noteOf(one) : '')}" ${one ? '' : 'disabled'}>
       </div>
-      <div class="me-bar" style="justify-content:flex-end;margin-top:12px"><button class="me-btn" data-me="manual-cancel">Cancel</button><button class="me-btn primary" data-me="manual-ok">Assign</button></div>
+      <div class="ms-btns"><button class="me-btn" data-me="manual-cancel">Cancel</button><button class="me-btn" data-me="manual-ok">Assign</button></div>
     </div>`;
     box.classList.remove('hidden');
-    $('#mmId').focus();
+    if ($('#msKind button.on:disabled') || !$('#msKind button.on')) {
+      const first = $('#msKind button:not(:disabled)');
+      $$('#msKind button').forEach(b => b.classList.toggle('on', b === first));
+    }
+    setupKindChanged();
+    $('#msCh').focus(); $('#msCh').select();
+  }
+
+  // Pitch Wheel has no id; Program Chg. ids are program numbers.
+  function setupKindChanged() {
+    const k = ($('#msKind button.on') || {}).dataset.kind;
+    const pb = k === 'pb';
+    $('#msId').disabled = pb;
+    $$('[data-step="msId"]').forEach(b => { b.disabled = pb; });
+    $('#msIdHint').textContent = pb ? 'not used for Pitch Wheel' : k === 'pc' ? 'program number' : k === 'cc' ? 'controller number' : 'note number (60 = middle C)';
+  }
+
+  function setupAssign() {
+    const k = ($('#msKind button.on') || {}).dataset.kind;
+    if (!k) return;
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, parseInt(v, 10) || 0));
+    const ch = clamp($('#msCh').value, 1, 16) || 1;
+    const id = k === 'pb' ? 0 : clamp($('#msId').value, 0, 127);
+    const val = $('#msVal') ? clamp($('#msVal').value, 0, 127) : null;
+    const one = ed.sel.size === 1 ? [...ed.sel][0] : null;
+    if (one && !$('#msNote').disabled) {
+      settings.midiNotes = settings.midiNotes || {};
+      const n = $('#msNote').value.trim();
+      if (n) settings.midiNotes[one] = n; else delete settings.midiNotes[one];
+    }
+    showManual(false);
+    ed.msg = { sig: `${k}:${ch}:${id}`, val };
+    assignSig(ed.msg.sig, val);
+    // OUT rows take the value for every message type that has one.
+    if (val != null) for (const r of selectedRows()) if (r.dir === 'OUT' && r.cue.msg !== 'pc') { r.cue.data2 = val; refreshRow(r.cue); }
+    renderEditorRows();
   }
 
   function midiFileData() {
@@ -2007,15 +2074,7 @@
       case 'remove': removeSelected(); break;
       case 'manual': if (!ed.sel.size) toast('Select a row first', 'warn'); else showManual(true); break;
       case 'manual-cancel': showManual(false); break;
-      case 'manual-ok': {
-        const t = $('#mmType').value;
-        const ch = Math.max(1, Math.min(16, parseInt($('#mmCh').value, 10) || 1));
-        const id = Math.max(0, Math.min(127, parseInt($('#mmId').value, 10) || 0));
-        showManual(false);
-        ed.msg = { sig: `${t}:${ch}:${id}`, val: null };
-        assignSig(ed.msg.sig, null);
-        break;
-      }
+      case 'manual-ok': setupAssign(); break;
       case 'new': {
         const r = await api.invoke('confirm', { message: 'Remove all MIDI and key mappings?', detail: 'GO, Stop All and every cue lose their MIDI and computer keys. MIDI cues keep what they send.', buttons: ['Remove all', 'Cancel'] });
         if (r !== 0) return;
@@ -2065,6 +2124,14 @@
   $('#midiBody').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-me]');
     if (b) { editorCommand(b.dataset.me); return; }
+    const kind = e.target.closest('#msKind button[data-kind]');
+    if (kind) { $$('#msKind button').forEach(x => x.classList.toggle('on', x === kind)); setupKindChanged(); return; }
+    const st = e.target.closest('button[data-step]');
+    if (st) {
+      const inp = $('#' + st.dataset.step);
+      inp.value = Math.max(+inp.min, Math.min(+inp.max, (parseInt(inp.value, 10) || 0) + Number(st.dataset.by)));
+      return;
+    }
     if (e.target.closest('#meManual') && e.target.id === 'meManual') { showManual(false); return; }
     const tr = e.target.closest('#meRows tr[data-key]');
     if (!tr) return;
@@ -2081,7 +2148,9 @@
 
   $('#midiBody').addEventListener('dblclick', (e) => {
     const tr = e.target.closest('#meRows tr[data-key]');
-    if (tr && ed.msg) { ed.sel = new Set([tr.dataset.key]); ed.anchor = tr.dataset.key; assignSig(ed.msg.sig, ed.msg.val); }
+    if (!tr) return;
+    ed.sel = new Set([tr.dataset.key]); ed.anchor = tr.dataset.key;
+    showEditorSel(); showManual(true);
   });
 
   $('#midiBody').addEventListener('change', (e) => {
@@ -2102,7 +2171,8 @@
   });
 
   $('#midiBody').addEventListener('keydown', (e) => {
-    if (e.target.closest('#meManual') && e.key === 'Enter') { e.preventDefault(); editorCommand('manual-ok'); }
+    if (e.target.closest('#meManual') && e.key === 'Enter') { e.preventDefault(); setupAssign(); }
+    if (e.key === 'Escape' && !$('#meManual').classList.contains('hidden')) { e.preventDefault(); e.stopPropagation(); showManual(false); }
     if (e.target.id === 'meNote' && e.key === 'Enter') e.target.blur();
   });
 
