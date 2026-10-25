@@ -430,7 +430,29 @@ body.has-wave { grid-template-rows: auto auto minmax(0, 1fr) auto clamp(120px, 2
 .me-manual { position: absolute; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 5; }
 .me-manual.hidden { display: none; }
 .me-manual-box { width: 420px; background: #2f2f32; border: 1px solid #4a4a4e; border-radius: 10px; padding: 16px; box-shadow: 0 20px 50px rgba(0,0,0,.5); }
-.me-manual-title { font-weight: 600; margin-bottom: 12px; }
+.ms-box { width: 660px; max-width: calc(100% - 32px); padding: 0; background: #2c2c2e; border-color: #48484c; overflow: hidden; }
+.ms-title { text-align: center; font-weight: 600; font-size: 13px; padding: 7px; background: #39393c; border-bottom: 1px solid #48484c; color: #e6e6e8; }
+.ms-grid { display: grid; grid-template-columns: 110px 1fr; gap: 12px 10px; align-items: center; padding: 18px 20px 6px; }
+.ms-grid label { color: #e6e6e8; }
+.ms-chan { color: #e6e6e8; }
+.ms-seg { display: inline-flex; background: #3a3a3d; border: 1px solid #4a4a4e; border-radius: 6px; padding: 2px; gap: 2px; justify-self: start; flex-wrap: nowrap; }
+.ms-seg button { background: none; border: none; border-radius: 4px; padding: 3px 11px; white-space: nowrap; color: #e6e6e8; font-size: 13px; }
+.ms-seg button.on { background: #5c5c60; box-shadow: 0 1px 2px rgba(0,0,0,.4); }
+.ms-seg button:disabled { color: #6c6c70; cursor: not-allowed; }
+.ms-row { display: flex; align-items: center; gap: 6px; }
+.ms-row input { width: 52px; background: #1f1f21; border: 1px solid #4a4a4e; border-radius: 4px; color: #e6e6e8; padding: 3px 6px; text-align: center; }
+.ms-row input:focus, .ms-note:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 2px #3b82f655; }
+.ms-row input:disabled { opacity: .45; }
+.ms-step { display: inline-flex; flex-direction: column; background: #3f3f42; border: 1px solid #4a4a4e; border-radius: 5px; overflow: hidden; }
+.ms-step button { background: none; border: none; color: #c9c9cc; font-size: 7px; line-height: 9px; padding: 0 4px; }
+.ms-step button:hover:not(:disabled) { background: #55555a; }
+.ms-step button:disabled { opacity: .4; }
+.ms-x { color: #8c8c90; font-size: 12px; margin-right: 6px; }
+.ms-hint { color: #77777b; font-size: 12px; margin-left: 4px; }
+.ms-note-l { margin-top: 26px; }
+.ms-note { margin-top: 26px; background: #1f1f21; border: 1px solid #4a4a4e; border-radius: 4px; color: #e6e6e8; padding: 4px 8px; }
+.ms-btns { display: flex; justify-content: flex-end; gap: 14px; padding: 16px 20px 16px; }
+.ms-btns .me-btn { min-width: 100px; }
 button.pill { cursor: pointer; }
 button.pill:hover { border-color: var(--accent); }
 
