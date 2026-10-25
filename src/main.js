@@ -360,6 +360,19 @@ ipcMain.handle('pick-media', async (_e, kind) => {
   return r.canceled ? [] : r.filePaths;
 });
 
+// Plain text files (MIDI mappings, CSV exports) chosen with a dialog.
+ipcMain.handle('save-text', async (_e, { title, defaultPath, filters, text }) => {
+  const r = await dialog.showSaveDialog(mainWin, { title, defaultPath, filters });
+  if (r.canceled || !r.filePath) return null;
+  fs.writeFileSync(r.filePath, String(text), 'utf8');
+  return r.filePath;
+});
+ipcMain.handle('open-text', async (_e, { title, filters }) => {
+  const r = await dialog.showOpenDialog(mainWin, { title, filters, properties: ['openFile'] });
+  if (r.canceled || !r.filePaths.length) return null;
+  return { path: r.filePaths[0], text: fs.readFileSync(r.filePaths[0], 'utf8') };
+});
+
 ipcMain.handle('confirm', async (_e, { message, detail, buttons }) => {
   const r = await dialog.showMessageBox(mainWin, {
     type: 'question', buttons: buttons || ['OK', 'Cancel'], defaultId: 0, cancelId: (buttons || ['OK', 'Cancel']).length - 1,
@@ -458,7 +471,7 @@ function buildMenu() {
         { label: 'Open Output Window', accelerator: 'CmdOrCtrl+Shift+O', click: send('output-open') },
         { label: 'Close Output Window', click: send('output-close') },
         { type: 'separator' },
-        { label: 'MIDI Patch…', accelerator: 'CmdOrCtrl+Shift+M', click: send('midi-patch') },
+        { label: 'MIDI Editor…', accelerator: 'CmdOrCtrl+Shift+M', click: send('midi-patch') },
         { type: 'separator' },
         ...(isMac ? [] : [{ label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: send('settings') }, { type: 'separator' }]),
         { role: 'togglefullscreen' },
