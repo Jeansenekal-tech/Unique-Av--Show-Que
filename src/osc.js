@@ -12,10 +12,11 @@ function readString(buf, off) {
 function decodeMessage(buf) {
   let [address, off] = readString(buf, 0);
   const args = [];
-  if (off >= buf.length) return { address, args };
+  if (off >= buf.length) return { address, args, types: '' };
   let tags;
   [tags, off] = readString(buf, off);
-  if (!tags.startsWith(',')) return { address, args };
+  if (!tags.startsWith(',')) return { address, args, types: '' };
+  const types = tags.slice(1);
   for (const t of tags.slice(1)) {
     switch (t) {
       case 'i': args.push(buf.readInt32BE(off)); off += 4; break;
@@ -28,10 +29,10 @@ function decodeMessage(buf) {
       case 'F': args.push(false); break;
       case 'N': args.push(null); break;
       case 'I': args.push(Infinity); break;
-      default: return { address, args }; // unknown tag: stop parsing
+      default: return { address, args, types }; // unknown tag: stop parsing
     }
   }
-  return { address, args };
+  return { address, args, types };
 }
 
 function decode(buf) {

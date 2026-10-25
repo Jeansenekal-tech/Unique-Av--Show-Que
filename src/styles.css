@@ -507,3 +507,7 @@ button.pill:hover { border-color: var(--accent); }
 .play-mode-tag:hover { border-color: var(--warn); }
 .play-mode-tag[hidden] { display: none; }
 .modal-body h3 .h-sub { text-transform: none; letter-spacing: 0; font-weight: 400; color: #4d5462; margin-left: 8px; }
+
+.me-oscarg { color: #77777b; font-family: inherit; }
+#sOscLast { font: 12px var(--mono); }
+#sOscLast.osc-bad { color: #ff8b75; }
