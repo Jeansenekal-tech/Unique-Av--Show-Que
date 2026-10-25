@@ -6,6 +6,7 @@ const dgram = require('dgram');
 const http = require('http');
 const { Readable } = require('stream');
 const osc = require('./osc');
+const command = require('./command');
 const { createUpdater } = require('./updater');
 
 const APP_NAME = 'Unique AV Show Cue';
@@ -199,7 +200,7 @@ function startOsc(port) {
     });
     sock.on('message', (buf, rinfo) => {
       try {
-        osc.decode(buf).forEach(m => sendToMain('osc-in', { address: m.address, args: m.args, from: rinfo.address }));
+        osc.decode(buf).forEach(m => sendToMain('osc-in', { address: m.address, args: m.args, types: m.types, from: rinfo.address }));
       } catch (e) { /* ignore malformed packets */ }
     });
     sock.bind(port, () => {
@@ -217,21 +218,12 @@ function stopOsc() {
 // into the same commands as OSC: http://localhost:53000/cue/3 = /showcue/cue 3
 // ---------------------------------------------------------------------------
 let httpServer = null;
-const HTTP_ALIASES = { stop: 'stopall', pause: 'pauseall', resume: 'resumeall' };
-const HTTP_NEEDS_ARG = ['cue', 'fire', 'setgo', 'standby', 'master'];
-const HTTP_NO_ARG = ['go', 'next', 'prev', 'playnext', 'stopall', 'panic', 'pauseall', 'resumeall'];
-
+// Web control (Stream Deck "Website" action): the path is read like an OSC address.
 function httpCommand(url) {
   let path0;
   try { path0 = decodeURIComponent(url.split('?')[0]); } catch (e) { return null; }
-  const parts = path0.split('/').filter(Boolean);
-  if (parts[0] && /^(showcue|mix16showcue)$/i.test(parts[0])) parts.shift();
-  if (!parts.length) return null;
-  const cmd = HTTP_ALIASES[parts[0].toLowerCase()] || parts[0].toLowerCase();
-  const args = parts.slice(1, 2).map(a => (a !== '' && !isNaN(a) ? Number(a) : a));
-  if (HTTP_NEEDS_ARG.includes(cmd) ? !args.length : !HTTP_NO_ARG.includes(cmd)) return null;
-  if (cmd === 'master' && typeof args[0] !== 'number') return null;
-  return { address: '/showcue/' + cmd, args };
+  const c = command.parse(path0, [], '');
+  return c ? { address: path0, args: [], label: command.describe(c) } : null;
 }
 
 function startHttp(port) {
@@ -242,7 +234,7 @@ function startHttp(port) {
       const m = req.url === '/favicon.ico' ? null : httpCommand(req.url || '/');
       if (m) sendToMain('osc-in', { ...m, from: 'http' });
       res.writeHead(m ? 200 : 404, { 'Content-Type': 'text/plain; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
-      res.end(m ? `OK ${m.address} ${m.args.join(' ')}`.trim() : 'Unknown address. Try /go, /cue/3, /stop, /panic, /pause, /resume, /next, /prev, /standby/3, /master/80');
+      res.end(m ? `OK ${m.label}` : 'Unknown address. Try /go, /cue/3, /cue/3/stop, /stop, /panic, /pause, /resume, /next, /prev, /standby/3, /master/80');
     });
     let settled = false;
     srv.on('error', (err) => {

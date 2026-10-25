@@ -197,19 +197,23 @@
         <p class="muted">Cutting never changes your audio file – it only sets where the cue starts and stops.</p>
         <h3>OSC (UDP, default port 53000)</h3>
         <table>
-          <tr><td><code>/showcue/go</code></td><td>GO. With a number argument: standby that cue and GO</td></tr>
-          <tr><td><code>/showcue/cue &lt;n&gt;</code></td><td>Fire cue n without moving standby</td></tr>
-          <tr><td><code>/showcue/setgo &lt;n&gt;</code></td><td>Set standby to cue n</td></tr>
+          <tr><td><code>/showcue/go</code> · <code>/showcue/go/&lt;n&gt;</code></td><td>GO · standby cue n and GO</td></tr>
+          <tr><td><code>/showcue/cue/&lt;n&gt;</code></td><td>Play cue n without moving standby</td></tr>
+          <tr><td><code>/showcue/cue/&lt;n&gt;/stop</code> · <code>/pause</code> · <code>/resume</code></td><td>Stop / pause / resume cue n</td></tr>
+          <tr><td><code>/showcue/cue/&lt;n&gt;/volume</code> + 0-100</td><td>Cue n volume</td></tr>
+          <tr><td><code>/showcue/standby/&lt;n&gt;</code></td><td>Set standby to cue n</td></tr>
           <tr><td><code>/showcue/next</code> · <code>/showcue/prev</code></td><td>Move standby</td></tr>
-          <tr><td><code>/showcue/stopall</code> · <code>/showcue/panic</code></td><td>Stop all with fade / immediately</td></tr>
-          <tr><td><code>/showcue/pauseall</code> · <code>/showcue/resumeall</code></td><td>Pause / resume</td></tr>
-          <tr><td><code>/showcue/master &lt;0-100&gt;</code></td><td>Master volume</td></tr>
+          <tr><td><code>/showcue/stop</code> · <code>/showcue/panic</code></td><td>Stop all with fade / immediately</td></tr>
+          <tr><td><code>/showcue/pause</code> · <code>/showcue/resume</code></td><td>Pause / resume everything</td></tr>
+          <tr><td><code>/showcue/master</code> + 0-100</td><td>Master volume (0.0–1.0 floats too)</td></tr>
         </table>
+        <p class="muted">A number can go in the address (<code>/showcue/cue/3</code>), after a space, or as an OSC argument – all the same. Settings → OSC shows the last message received and what it did.</p>
         <p class="muted">MiX16-style addresses (<code>/mix16showcue/go</code> etc.) are accepted too. Cue numbers match the # column; if none matches, the number is used as a position in the list.</p>
         <h3>Stream Deck / web (http://localhost:53000)</h3>
         <table>
           <tr><td><code>/go</code> · <code>/go/&lt;n&gt;</code></td><td>GO · standby cue n and GO</td></tr>
           <tr><td><code>/cue/&lt;n&gt;</code></td><td>Fire cue n without moving standby</td></tr>
+          <tr><td><code>/cue/&lt;n&gt;/stop</code> · <code>/pause</code> · <code>/resume</code> · <code>/volume/&lt;0-100&gt;</code></td><td>One cue</td></tr>
           <tr><td><code>/standby/&lt;n&gt;</code> · <code>/next</code> · <code>/prev</code></td><td>Move standby</td></tr>
           <tr><td><code>/stop</code> · <code>/panic</code></td><td>Stop all with fade / immediately</td></tr>
           <tr><td><code>/pause</code> · <code>/resume</code></td><td>Pause / resume</td></tr>
@@ -224,6 +228,7 @@
 
   <div id="toasts" class="toasts"></div>
 
+  <script src="command.js"></script>
   <script src="audio-router.js"></script>
   <script src="waveform.js"></script>
   <script src="app.js"></script>

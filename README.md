@@ -84,15 +84,17 @@ npm run dist:mac   # on a Mac: build the Apple Silicon DMG into dist/
 
 | Address | Action |
 |---|---|
-| `/showcue/go` `[n]` | GO (optionally standby cue n first) |
-| `/showcue/cue n` | Fire cue n without moving standby |
-| `/showcue/setgo n` | Set standby to cue n |
-| `/showcue/next`, `/showcue/prev` | Move standby |
-| `/showcue/stopall`, `/showcue/panic` | Stop with fade / immediately |
-| `/showcue/pauseall`, `/showcue/resumeall` | Pause / resume |
-| `/showcue/master 0-100` | Master volume |
+| `/showcue/go` · `/showcue/go/n` | GO (optionally standby cue n first) |
+| `/showcue/cue/n` | Play cue n without moving standby |
+| `/showcue/cue/n/stop` · `/pause` · `/resume` | Stop / pause / resume cue n |
+| `/showcue/cue/n/volume` + 0-100 | Cue n volume (e.g. `/showcue/cue/2/volume/80`) |
+| `/showcue/standby/n` (or `/showcue/setgo/n`) | Set standby to cue n |
+| `/showcue/next` · `/showcue/prev` | Move standby |
+| `/showcue/stop` · `/showcue/panic` | Stop all with fade / immediately |
+| `/showcue/pause` · `/showcue/resume` | Pause / resume everything |
+| `/showcue/master` + 0-100 | Master volume (0.0–1.0 floats work too; or `/showcue/master/80`) |
 
-`/mix16showcue/...` equivalents also work. With a feedback host set, the app sends `/showcue/standby <number> <name>` when standby changes.
+A number can go in the address (`/showcue/cue/3`), after a space (`/showcue/cue 3`) or as an OSC argument (`/showcue/cue` + `3`) – all the same. Settings → OSC shows the last message received and what it did; anything not understood pops up a warning. `/mix16showcue/...` equivalents also work. With a feedback host set, the app sends `/showcue/standby <number> <name>` when standby changes.
 
 ### Stream Deck
 

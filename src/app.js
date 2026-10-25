@@ -1570,28 +1570,51 @@
     return i;
   }
 
+  // OSC and web control share one reader (command.js), so /cue/3, "cue 3" and
+  // /cue + 3 all work. The last message and what it did show in Settings.
+  let lastOsc = null;
   function handleOsc(m) {
     flash('#oscPill');
-    let a = (m.address || '').toLowerCase();
-    a = a.replace(/^\/(showcue|mix16showcue|mix16apps\/playlist|mix16apps)\//, '');
-    const arg = m.args && m.args.length ? m.args[0] : undefined;
-    const noCue = () => toast(`${m.from === 'http' ? 'Stream Deck' : 'OSC'}: no cue ${arg}`, 'warn');
-    switch (a) {
-      case 'go':
-        if (arg !== undefined && typeof arg !== 'boolean') { const i = findCueByNumber(arg); if (i < 0) return noCue(); setStandby(i, true); }
-        go(); break;
-      case 'cue': case 'fire': { const i = findCueByNumber(arg); if (i >= 0) fire(show.cues[i], true); else noCue(); break; }
-      case 'setgo': case 'standby': case 'set/go': { const i = findCueByNumber(arg); if (i >= 0) setStandby(i, true); else noCue(); break; }
-      case 'next': case 'setnext': case 'set/next': setStandby(standby + 1, true); break;
-      case 'prev': case 'setprev': case 'set/prev': setStandby(standby - 1, true); break;
-      case 'playnext': go(); break;
+    const src = m.from === 'http' ? 'Stream Deck' : 'OSC';
+    const text = `${m.address}${m.args && m.args.length ? ' ' + m.args.map(a => JSON.stringify(a)).join(' ') : ''}`;
+    const c = ShowCommand.parse(m.address, m.args, m.types);
+    const result = c ? runCommand(c) : 'not understood';
+    lastOsc = { text, result, ok: !!c && !result.startsWith('no cue'), time: new Date().toTimeString().slice(0, 8), src };
+    if (!lastOsc.ok) toast(`${src}: ${text} – ${result}`, 'warn');
+    const el = $('#sOscLast');
+    if (el) renderOscLast(el);
+  }
+
+  function runCommand(c) {
+    const idx = c.cue != null ? findCueByNumber(c.cue) : -1;
+    if (c.cue != null && idx < 0) return `no cue ${c.cue}`;
+    const cue = idx >= 0 ? show.cues[idx] : null;
+    switch (c.cmd) {
+      case 'go': if (cue) setStandby(idx, true); go(); break;
+      case 'standby': setStandby(idx, true); break;
+      case 'next': setStandby(standby + 1, true); break;
+      case 'prev': setStandby(standby - 1, true); break;
       case 'stopall': stopAll(); break;
       case 'panic': stopAll(0, true); break;
       case 'pauseall': setPausedAll(true); break;
       case 'resumeall': setPausedAll(false); break;
-      case 'master': case 'setmaster': if (typeof arg === 'number') setMaster(arg <= 1 && arg % 1 !== 0 ? arg * 100 : arg); break;
-      default: break;
+      case 'master': setMaster(c.value); break;
+      case 'cue':
+        switch (c.action) {
+          case 'play': fire(cue, true); break;
+          case 'stop': liveInsts(cue).forEach(i => stopInst(i)); break;
+          case 'pause': liveInsts(cue).filter(i => i.state !== 'paused').forEach(toggleInstPause); break;
+          case 'resume': liveInsts(cue).filter(i => i.state === 'paused').forEach(toggleInstPause); break;
+          case 'volume': setCueVolume(cue, c.value, true); break;
+        }
+        break;
     }
+    return ShowCommand.describe(c);
+  }
+
+  function renderOscLast(el) {
+    el.className = lastOsc ? (lastOsc.ok ? '' : 'osc-bad') : 'muted';
+    el.textContent = lastOsc ? `${lastOsc.time} ${lastOsc.src}: ${lastOsc.text} → ${lastOsc.result}` : 'Nothing received yet';
   }
   api.on('osc-in', handleOsc);
 
@@ -1787,21 +1810,21 @@
   const MIDI_KIND = { note: 'Note On', noteoff: 'Note Off', pb: 'Pitch Wheel', cc: 'Control Change', pc: 'Program Change', key: 'Computer Key' };
   const GENERAL_ROWS = [
     ['go', 'Playlist', 'Go', '/showcue/go'], ['stop-all', 'Playlist', 'Stop All', '/showcue/stopall'],
-    ['panic', 'Playlist', 'Panic', '/showcue/panic'], ['pause-all', 'Playlist', 'Pause / Resume', '/showcue/pauseall · resumeall'],
+    ['panic', 'Playlist', 'Panic', '/showcue/panic'], ['pause-all', 'Playlist', 'Pause / Resume', '/showcue/pause · /showcue/resume'],
     ['prev', 'Playlist', 'Prev Cue', '/showcue/prev'], ['next', 'Playlist', 'Next Cue', '/showcue/next'],
-    ['master', 'Master', 'Volume', '/showcue/master 0-100']
+    ['master', 'Master', 'Volume', '/showcue/master']
   ];
   const cueGroup = (c) => (['audio', 'video', 'image'].includes(c.type) ? c.type : 'other');
   const rowKey = (action, cueId) => `${action}|${cueId || ''}`;
 
   function editorRows() {
-    const rows = GENERAL_ROWS.map(([action, type, act, osc]) => ({ key: rowKey(action), dir: 'IN', group: 'general', type, no: '', act, action, cueId: null, osc }));
+    const rows = GENERAL_ROWS.map(([action, type, act, osc]) => ({ key: rowKey(action), dir: 'IN', group: 'general', type, no: '', act, action, cueId: null, osc, oscArg: action === 'master' ? '0-100' : '' }));
     for (const c of show.cues) {
       const type = (TYPES[c.type] || {}).label || c.type;
       const acts = c.type === 'audio' || c.type === 'video' ? ['cue', 'cue-pause', 'cue-stop', 'cue-volume'] : c.type === 'image' ? ['cue', 'cue-stop'] : ['cue'];
       for (const action of acts) {
         rows.push({ key: rowKey(action, c.id), dir: 'IN', group: cueGroup(c), type, no: c.number, act: CUE_ACTIONS[action], action, cueId: c.id, cue: c,
-          osc: action === 'cue' ? `/showcue/cue ${c.number}` : '' });
+          osc: `/showcue/cue/${c.number}${action === 'cue' ? '' : '/' + CUE_ACTIONS[action].toLowerCase()}`, oscArg: action === 'cue-volume' ? '0-100' : '' });
       }
       if (c.type === 'midi') rows.push({ key: `out|${c.id}`, dir: 'OUT', group: 'other', type: 'MIDI Cue', no: c.number, act: 'Send', cueId: c.id, cue: c, osc: '' });
     }
@@ -1824,7 +1847,7 @@
       return { midi: [[MIDI_KIND[c.msg] || c.msg, c.channel || 1, c.data1, c.msg === 'pc' || c.msg === 'noteoff' ? '' : c.data2]],
         osc: `<span class="${missing ? 'me-missing' : ''}">→ ${esc(port || 'no MIDI output')}${missing && c.port ? ' (not connected)' : ''}</span>` };
     }
-    return { midi: rowMaps(r).map(m => sigCells(m.sig, FADER_ACTIONS.includes(r.action))), osc: esc(r.osc) };
+    return { midi: rowMaps(r).map(m => sigCells(m.sig, FADER_ACTIONS.includes(r.action))), osc: esc(r.osc) + (r.oscArg ? ` <span class="me-oscarg" title="Send this as an OSC argument, or add it to the address, e.g. ${esc(r.osc)}/80">+ ${r.oscArg}</span>` : '') };
   }
   const noteOf = (r) => ((settings.midiNotes || {})[r.key] || '');
 
@@ -2252,6 +2275,7 @@
       <div class="settings-grid">
         <label>OSC input</label><label class="row" style="color:var(--text)"><input type="checkbox" id="sOscOn" ${settings.oscEnabled ? 'checked' : ''}> Listen for OSC on UDP port <input type="number" id="sOscPort" style="width:90px" min="1" max="65535" value="${settings.oscPort}"></label>
         <label>Status</label><span class="${oscStatus.ok ? '' : 'muted'}">${oscStatus.ok ? `Listening on port ${settings.oscPort}` : oscStatus.off ? 'Off' : `Not listening: ${esc(oscStatus.error || '')}`}</span>
+        <label>Last received</label><span id="sOscLast"></span>
         <label>Feedback to</label><div class="row"><input type="text" id="sFbHost" placeholder="IP address (blank = off)" value="${esc(settings.fbHost)}"><input type="number" id="sFbPort" style="width:90px" value="${settings.fbPort}"></div>
       </div>
       <h3>Stream Deck / web control</h3>
@@ -2283,6 +2307,7 @@
       </div>
       <p class="muted">Updates download in the background and install when you close the app, or straight away with Restart &amp; update. The app never restarts by itself during a show.</p>`;
     renderUpdate();
+    renderOscLast($('#sOscLast'));
     fillRouteSelect($('#sDefRoute'), null, settings.defaultDevice, settings.defaultRoute);
     fillRouteSelect($('#sAllRoute'), null, settings.defaultDevice, settings.defaultRoute);
   }
