@@ -48,8 +48,7 @@
   let midiLearn = null;
   let padLearn = false; // pads view: clicking a pad arms MIDI learn instead of playing it
   const ccLast = {};
-  const midiLog = []; // newest first, for the MIDI Patch monitor
-  let oscStatus = { ok: false };
+    let oscStatus = { ok: false };
   let httpStatus = { ok: false };
   let settings = loadSettings();
   let wave = null;
@@ -1643,7 +1642,7 @@
       settings.midiMap = settings.midiMap.filter(m => !(m.action === 'cue' && m.sig === sig));
       if (taken.length) note = ` (moved from cue ${taken.map(t => t.number).join(', ')})`;
       const g = settings.midiMap.find(m => m.action !== 'cue' && m.sig === sig);
-      if (g) note += ` – note: this key also does ${MIDI_ACTIONS.find(a => a[0] === g.action)[1]}`;
+      if (g) note += ` – note: this key also does ${mapLabel(g)}`;
     }
     settings.midiMap.push({ sig, action: midiLearn.action, cueId: midiLearn.cueId || null });
     saveSettings();
@@ -1713,150 +1712,375 @@
     if (!sig) return;
     flash('#midiPill');
 
-    if (midiLearn) {
-      learnSig(sig);
-      logMidi(e, sig, val, midiLearn ? 'Not learned' : `Learned for ${learnTarget(sig)}`);
-      return;
-    }
+    if (midiLearn) { learnSig(sig); return; }
 
-    const did = [];
+    // While the MIDI Editor is open, incoming MIDI is only shown for assigning.
+    if (editorOpen()) { editorMessage(sig, val); return; }
+
     for (const m of settings.midiMap) {
       if (m.sig !== sig) continue;
-      if (m.action === 'master') { if (val != null) { setMaster((val / 127) * 100); did.push(`Master ${Math.round((val / 127) * 100)}`); } continue; }
+      if (m.action === 'master') { if (val != null) setMaster((val / 127) * 100); continue; }
+      if (m.action === 'cue-volume') { const c = cueById(m.cueId); if (c && val != null) setCueVolume(c, (val / 127) * 100, true); continue; }
       if (!trigger) continue;
       runAction(m.action, m.cueId);
-      did.push(mapLabel(m));
     }
-    logMidi(e, sig, val, did.join(', '));
   }
 
   // What a mapping does, in words.
+  const CUE_ACTIONS = { cue: 'Play', 'cue-pause': 'Pause', 'cue-stop': 'Stop', 'cue-volume': 'Volume' };
   function mapLabel(m) {
-    if (m.action === 'cue') { const c = cueById(m.cueId); return c ? `Cue ${c.number} ${displayName(c)}` : 'Deleted cue'; }
+    if (CUE_ACTIONS[m.action]) {
+      const c = cueById(m.cueId);
+      return c ? `cue ${c.number} ${CUE_ACTIONS[m.action]}` : 'a deleted cue';
+    }
     const a = MIDI_ACTIONS.find(x => x[0] === m.action);
     return a ? a[1] : m.action;
-  }
-  function learnTarget(sig) {
-    const m = [...settings.midiMap].reverse().find(x => x.sig === sig);
-    return m ? mapLabel(m) : '';
-  }
-
-  function logMidi(e, sig, val, did) {
-    const t = new Date();
-    midiLog.unshift({
-      time: t.toTimeString().slice(0, 8),
-      port: (e.target && e.target.name) || '',
-      sig, val, did
-    });
-    if (midiLog.length > 40) midiLog.length = 40;
-    if (!$('#midiModal').classList.contains('hidden')) renderMidiMonitor();
   }
 
   function refreshMidiViews() {
     if (!$('#settingsModal').classList.contains('hidden')) renderSettings();
-    if (!$('#midiModal').classList.contains('hidden')) renderMidiPatch();
+    if (editorOpen()) renderMidiEditor();
   }
 
-  // ------------------------------------------------------------------ MIDI patch window
-  const MIDI_MSG = { note: 'Note On', noteoff: 'Note Off', cc: 'CC', pc: 'Program' };
-  function midiOutText(c) {
-    const d1 = c.msg === 'pc' ? `${c.data1}` : `${c.data1}`;
-    const d2 = c.msg === 'pc' || c.msg === 'noteoff' ? '' : ` · ${c.msg === 'cc' ? 'value' : 'vel'} ${c.data2}`;
-    return `${MIDI_MSG[c.msg] || c.msg} ${d1}${d2} · ch ${c.channel || 1}`;
+  // ------------------------------------------------------------------ MIDI Editor
+  // Laid out like MiX16's MIDI editor: one row per thing that can be controlled
+  // (IN) or that sends MIDI (OUT). Select rows, play something on the
+  // controller (or type a computer key) and press Assign.
+  const ed = {
+    sel: new Set(), anchor: null, msg: null, multi: false,
+    filters: { in: true, out: true, general: true, audio: true, video: true, image: true, other: true, assigned: false }
+  };
+  const editorOpen = () => !$('#midiModal').classList.contains('hidden');
+  const FADER_ACTIONS = ['master', 'cue-volume'];
+  const MIDI_KIND = { note: 'Note On', noteoff: 'Note Off', cc: 'Control Change', pc: 'Program Change', key: 'Computer Key' };
+  const GENERAL_ROWS = [
+    ['go', 'Playlist', 'Go', '/showcue/go'], ['stop-all', 'Playlist', 'Stop All', '/showcue/stopall'],
+    ['panic', 'Playlist', 'Panic', '/showcue/panic'], ['pause-all', 'Playlist', 'Pause / Resume', '/showcue/pauseall · resumeall'],
+    ['prev', 'Playlist', 'Prev Cue', '/showcue/prev'], ['next', 'Playlist', 'Next Cue', '/showcue/next'],
+    ['master', 'Master', 'Volume', '/showcue/master 0-100']
+  ];
+  const cueGroup = (c) => (['audio', 'video', 'image'].includes(c.type) ? c.type : 'other');
+  const rowKey = (action, cueId) => `${action}|${cueId || ''}`;
+
+  function editorRows() {
+    const rows = GENERAL_ROWS.map(([action, type, act, osc]) => ({ key: rowKey(action), dir: 'IN', group: 'general', type, no: '', act, action, cueId: null, osc }));
+    for (const c of show.cues) {
+      const type = (TYPES[c.type] || {}).label || c.type;
+      const acts = c.type === 'audio' || c.type === 'video' ? ['cue', 'cue-pause', 'cue-stop', 'cue-volume'] : c.type === 'image' ? ['cue', 'cue-stop'] : ['cue'];
+      for (const action of acts) {
+        rows.push({ key: rowKey(action, c.id), dir: 'IN', group: cueGroup(c), type, no: c.number, act: CUE_ACTIONS[action], action, cueId: c.id, cue: c,
+          osc: action === 'cue' ? `/showcue/cue ${c.number}` : '' });
+      }
+      if (c.type === 'midi') rows.push({ key: `out|${c.id}`, dir: 'OUT', group: 'other', type: 'MIDI Cue', no: c.number, act: 'Send', cueId: c.id, cue: c, osc: '' });
+    }
+    return rows;
+  }
+  const rowMaps = (r) => (r.dir === 'IN' ? settings.midiMap.filter(m => m.action === r.action && (m.cueId || null) === (r.cueId || null)) : []);
+
+  // A row's MIDI as table cells: one line per mapping.
+  function sigCells(sig, fader) {
+    if (sig.startsWith('key:')) return ['Computer Key', '', keyName(sig.slice(4)), ''];
+    const [t, ch, n] = sig.split(':');
+    return [MIDI_KIND[t] || t, ch, n, fader ? '(0-127)' : ''];
+  }
+  function rowCells(r) {
+    if (r.dir === 'OUT') {
+      const c = r.cue;
+      const outs = midiAccess ? Array.from(midiAccess.outputs.values()) : [];
+      const port = c.port || (outs[0] ? outs[0].name : '');
+      const missing = c.port ? !outs.some(o => o.name === c.port) : !outs.length;
+      return { midi: [[MIDI_KIND[c.msg] || c.msg, c.channel || 1, c.data1, c.msg === 'pc' || c.msg === 'noteoff' ? '' : c.data2]],
+        osc: `<span class="${missing ? 'me-missing' : ''}">→ ${esc(port || 'no MIDI output')}${missing && c.port ? ' (not connected)' : ''}</span>` };
+    }
+    return { midi: rowMaps(r).map(m => sigCells(m.sig, FADER_ACTIONS.includes(r.action))), osc: esc(r.osc) };
+  }
+  const noteOf = (r) => ((settings.midiNotes || {})[r.key] || '');
+
+  function visibleRows() {
+    const f = ed.filters;
+    return editorRows().filter(r => (r.dir === 'IN' ? f.in : f.out) && f[r.group] && (!f.assigned || r.dir === 'OUT' || rowMaps(r).length));
   }
 
-  const sigsHTML = (ms) => (ms.length ? ms.map(m => esc(sigLabel(m.sig))).join('<br>') : '<span class="muted">—</span>');
-
-  function renderMidiPatch() {
+  function renderMidiEditor() {
+    const f = ed.filters;
     const ins = midiAccess ? Array.from(midiAccess.inputs.values()) : [];
-    const outs = midiAccess ? Array.from(midiAccess.outputs.values()) : [];
-    const listening = (name) => settings.midiInput === 'all' || settings.midiInput === name;
-    const learnBtn = (attr, on, fader) => `<button class="ibtn ${on ? 'learning' : ''}" ${attr} title="${fader ? 'Then move a MIDI fader or knob' : 'Then press a MIDI key, pad or button, or a computer key'}">${on ? (fader ? 'Move a fader…' : 'Press a key or MIDI…') : 'Learn'}</button>`;
-    const cues = show.cues.filter(c => c.type !== 'folder');
-    const midiCues = cues.filter(c => c.type === 'midi');
-
+    const chk = (k, l) => `<label class="me-chk"><input type="checkbox" data-filter="${k}" ${f[k] ? 'checked' : ''}> ${l}</label>`;
     $('#midiBody').innerHTML = `
-      ${midiAccess ? '' : '<p class="mp-warn">MIDI is not available on this computer.</p>'}
-      <h3>Devices</h3>
-      <div class="settings-grid">
-        <label>Listen to</label>
-        <select id="mListen">${[['all', 'All MIDI inputs'], ['none', 'Off'], ...ins.map(i => [i.name, i.name])].map(([v, l]) => `<option value="${esc(v)}" ${v === settings.midiInput ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
-        <label>Inputs (control in)</label>
-        <div class="mp-devs">${ins.length ? ins.map(i => `<span class="mp-dev ${listening(i.name) ? 'on' : ''}" title="${listening(i.name) ? 'Listening' : 'Ignored'}"><i></i>${esc(i.name)}</span>`).join('') : '<span class="muted">None connected</span>'}</div>
-        <label>Outputs (MIDI cues)</label>
-        <div class="mp-devs">${outs.length ? outs.map(o => `<span class="mp-dev on out"><i></i>${esc(o.name)}</span>`).join('') : '<span class="muted">None connected</span>'}</div>
+      <div class="me-bar">
+        <button class="me-btn" data-me="new" title="Remove every MIDI and computer-key mapping">New</button>
+        <button class="me-btn" data-me="open" title="Load mappings from a .showmidi file">Open…</button>
+        <button class="me-btn" data-me="save" title="Save all mappings to a .showmidi file">Save…</button>
+        <button class="me-btn" data-me="export" title="Export the rows shown as a spreadsheet (CSV)">Export…</button>
+        <span class="me-grow"></span>
+        <button class="me-btn" data-me="close">Close</button>
       </div>
-
-      <h3>Show controls <span class="mp-sub">MIDI or computer keys</span></h3>
-      <table class="mp-table">
-        ${MIDI_ACTIONS.map(([a, l]) => {
-          const ms = settings.midiMap.filter(x => x.action === a);
-          return `<tr><td>${l}</td><td class="sig">${sigsHTML(ms)}</td>
-            <td class="r">${learnBtn(`data-learn="${a}"`, midiLearn && midiLearn.action === a, a === 'master')} ${ms.length ? `<button class="ibtn" data-unlearn="${a}">Clear</button>` : ''}</td></tr>`;
-        }).join('')}
-      </table>
-
-      <h3>Cue triggers <span class="mp-sub">a MIDI or computer key fires the cue directly; standby does not move</span></h3>
-      ${cues.length ? `<table class="mp-table">
-        ${cues.map(c => {
-          const ms = settings.midiMap.filter(x => x.action === 'cue' && x.cueId === c.id);
-          const on = midiLearn && midiLearn.action === 'cue' && midiLearn.cueId === c.id;
-          return `<tr><td class="mp-num">${esc(c.number)}</td><td class="mp-name"><span class="mp-type">${esc((TYPES[c.type] || {}).tag || c.type)}</span>${esc(displayName(c))}</td>
-            <td class="sig">${sigsHTML(ms)}</td>
-            <td class="r">${learnBtn(`data-learn-cue="${c.id}"`, on)} ${ms.length ? `<button class="ibtn" data-unlearn-cue="${c.id}">Clear</button>` : ''}</td></tr>`;
-        }).join('')}
-      </table>` : '<p class="muted">No cues in this show yet.</p>'}
-
-      <h3>MIDI sent by cues</h3>
-      ${midiCues.length ? `<table class="mp-table">
-        ${midiCues.map(c => {
-          const port = c.port || (outs[0] ? outs[0].name : '');
-          const missing = c.port ? !outs.some(o => o.name === c.port) : !outs.length;
-          return `<tr><td class="mp-num">${esc(c.number)}</td><td class="mp-name">${esc(displayName(c))}</td>
-            <td class="sig">${esc(midiOutText(c))}</td>
-            <td class="${missing ? 'mp-missing' : 'muted'}">→ ${esc(port || 'no output')}${missing && c.port ? ' (not connected)' : ''}${c.port ? '' : ' <span class="muted">(first)</span>'}</td>
-            <td class="r"><button class="ibtn" data-test-cue="${c.id}">Send</button> <button class="ibtn" data-edit-cue="${c.id}">Edit</button></td></tr>`;
-        }).join('')}
-      </table>` : '<p class="muted">No MIDI cues. Add one with the MIDI button in the toolbar to send notes, CCs or program changes.</p>'}
-
-      <h3>Monitor <span class="mp-sub">incoming MIDI</span><button class="ibtn mp-clear" id="mClearLog">Clear</button></h3>
-      <div id="midiMon" class="mp-mon"></div>
-      <p class="muted">MIDI mappings are saved on this computer and work with any show. Press a key on your controller and it shows up in the monitor with what it did. Computer keys aren't listed in the monitor.</p>`;
-    renderMidiMonitor();
+      <div class="me-bar">
+        <label class="me-lbl">MIDI Message:</label>
+        <input id="meMsg" class="me-msg" readonly placeholder="Auto learn from MIDI source.">
+        <label class="me-lbl">Ch. Note:</label>
+        <input id="meNote" class="me-note" spellcheck="false" placeholder="Your note for the selected row">
+        <button class="me-btn" data-me="assign" title="Give the selected row(s) the MIDI message shown on the left">Assign</button>
+        <button class="me-btn" data-me="remove" title="Remove the MIDI from the selected row(s)">Remove</button>
+        <button class="me-btn" data-me="manual" title="Type a MIDI message instead of learning it">Assign Manually…</button>
+      </div>
+      <div class="me-bar">
+        <label class="me-chk"><input type="checkbox" id="meMulti" ${ed.multi ? 'checked' : ''}> Multiple Selection</label>
+        <span class="me-grow"></span>
+        <span class="me-lbl">Filter:</span>
+        ${chk('in', 'MIDI IN')}${chk('out', 'MIDI OUT')}${chk('general', 'GENERAL')}${chk('audio', 'AUDIO')}${chk('video', 'VIDEO')}${chk('image', 'IMAGE')}${chk('other', 'OTHER')}${chk('assigned', 'ASSIGNED')}
+      </div>
+      <div class="me-table-wrap" id="meWrap">
+        <table class="me-table">
+          <thead><tr><th>MIDI</th><th>Channel Type</th><th>Ch. No.</th><th>Ch. Action</th><th>Ch. Note</th><th>MIDI Action</th><th>MIDI Ch.</th><th>MIDI Id</th><th>MIDI Val</th><th>OSC</th></tr></thead>
+          <tbody id="meRows"></tbody>
+        </table>
+      </div>
+      <div id="meManual" class="me-manual hidden"></div>
+      <div class="me-foot">
+        <span>Listen to</span>
+        <select id="meListen">${[['all', 'All MIDI inputs'], ['none', 'Off'], ...ins.map(i => [i.name, i.name])].map(([v, l]) => `<option value="${esc(v)}" ${v === settings.midiInput ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+        <span class="muted">${!midiAccess ? 'MIDI is not available on this computer' : ins.length ? `Inputs: ${esc(ins.map(i => i.name).join(', '))}` : 'No MIDI inputs connected'}</span>
+        <span class="me-grow"></span>
+        <span class="muted">While this window is open your controller only teaches, it doesn't fire cues.</span>
+      </div>`;
+    renderEditorRows();
+    renderEditorMsg();
   }
 
-  function renderMidiMonitor() {
-    const el = $('#midiMon');
+  function renderEditorRows() {
+    const tb = $('#meRows');
+    if (!tb) return;
+    const rows = visibleRows();
+    const live = new Set(rows.map(r => r.key));
+    for (const k of [...ed.sel]) if (!live.has(k)) ed.sel.delete(k);
+    const hit = ed.msg ? new Set(settings.midiMap.filter(m => m.sig === ed.msg.sig).map(m => rowKey(m.action, m.cueId))) : new Set();
+    tb.innerHTML = rows.length ? rows.map(r => {
+      const { midi, osc } = rowCells(r);
+      const col = (i) => midi.map(x => esc(x[i])).join('<br>');
+      return `<tr data-key="${esc(r.key)}" class="${ed.sel.has(r.key) ? 'sel' : ''}${hit.has(r.key) ? ' hit' : ''}${r.dir === 'OUT' ? ' out' : ''}">
+        <td>${r.dir}</td><td>${esc(r.type)}</td><td class="c">${esc(r.no)}</td><td>${esc(r.act)}</td><td class="me-n">${esc(noteOf(r))}</td>
+        <td>${col(0)}</td><td class="c">${col(1)}</td><td class="c">${col(2)}</td><td class="c">${col(3)}</td><td class="me-osc">${osc}</td></tr>`;
+    }).join('') : '<tr><td colspan="10" class="muted">Nothing matches the filter.</td></tr>';
+    const one = ed.sel.size === 1 ? rows.find(r => ed.sel.has(r.key)) : null;
+    const note = $('#meNote');
+    if (document.activeElement !== note) note.value = one ? noteOf(one) : '';
+    note.disabled = !one;
+  }
+
+  // Selection changes only restyle rows, so a double-click still lands on the same row.
+  function showEditorSel() {
+    $$('#meRows tr[data-key]').forEach(tr => tr.classList.toggle('sel', ed.sel.has(tr.dataset.key)));
+    const note = $('#meNote');
+    const one = ed.sel.size === 1 ? editorRows().find(r => ed.sel.has(r.key)) : null;
+    note.value = one ? noteOf(one) : '';
+    note.disabled = !one;
+  }
+
+  function renderEditorMsg() {
+    const el = $('#meMsg');
     if (!el) return;
-    el.innerHTML = midiLog.length
-      ? midiLog.map(l => `<div class="mp-row"><span class="muted">${l.time}</span><span class="mp-port">${esc(l.port)}</span><span class="sig">${esc(sigLabel(l.sig))}${l.val != null ? ` = ${l.val}` : ''}</span><span class="${l.did ? 'mp-did' : 'muted'}">${esc(l.did || 'not patched')}</span></div>`).join('')
-      : '<div class="muted">Waiting for MIDI…</div>';
+    if (!ed.msg) { el.value = ''; return; }
+    const users = settings.midiMap.filter(m => m.sig === ed.msg.sig).map(mapLabel);
+    el.value = `${sigLabel(ed.msg.sig)}${ed.msg.val != null ? ` = ${ed.msg.val}` : ''}${users.length ? `  →  ${users.join(', ')}` : ''}`;
   }
 
-  $('#midiBody').addEventListener('change', (e) => {
-    if (e.target.id === 'mListen') { settings.midiInput = e.target.value; bindMidi(); updateMidiPill(); saveSettings(); renderMidiPatch(); }
-  });
+  function editorMessage(sig, val) {
+    ed.msg = { sig, val };
+    renderEditorMsg();
+    renderEditorRows();
+  }
+
+  // Keys typed while the editor is open: arrows move, Esc closes, other keys
+  // become the message to assign (built-in shortcuts are left alone).
+  function editorKey(e) {
+    if (e.key === 'Escape') return false;
+    e.preventDefault();
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { moveEditorSel(e.key === 'ArrowDown' ? 1 : -1); return true; }
+    if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || MODIFIER_KEYS.includes(e.key)) return true;
+    if (KEY_RESERVED[e.code]) { toast(`${keyName(e.code)} is used for ${KEY_RESERVED[e.code]}. Pick another key.`, 'warn'); return true; }
+    editorMessage(`key:${e.code}`, null);
+    return true;
+  }
+
+  function moveEditorSel(d) {
+    const rows = visibleRows();
+    if (!rows.length) return;
+    let i = rows.findIndex(r => r.key === ed.anchor);
+    i = Math.max(0, Math.min(rows.length - 1, i < 0 ? 0 : i + d));
+    ed.sel = new Set([rows[i].key]); ed.anchor = rows[i].key;
+    showEditorSel();
+    const tr = $(`#meRows tr[data-key="${CSS.escape(rows[i].key)}"]`);
+    if (tr) tr.scrollIntoView({ block: 'nearest' });
+  }
+
+  const selectedRows = () => editorRows().filter(r => ed.sel.has(r.key));
+
+  function assignSig(sig, val) {
+    const rows = selectedRows();
+    if (!rows.length) { toast('Select a row first', 'warn'); return; }
+    if (!sig) { toast('Play something on your MIDI controller (or press a key) first', 'warn'); return; }
+    const isKey = sig.startsWith('key:');
+    let changedCue = false, skipped = 0;
+    for (const r of rows) {
+      if (r.dir === 'OUT') {
+        if (isKey) { skipped++; continue; }
+        const [t, ch, n] = sig.split(':');
+        Object.assign(r.cue, { msg: t, channel: Number(ch), data1: Number(n) });
+        if (t === 'cc' && val != null) r.cue.data2 = val;
+        refreshRow(r.cue); changedCue = true;
+        continue;
+      }
+      if (FADER_ACTIONS.includes(r.action) && !sig.startsWith('cc:')) { skipped++; continue; }
+      settings.midiMap = settings.midiMap.filter(m => !(m.action === r.action && (m.cueId || null) === (r.cueId || null) && isKeySig(m.sig) === isKey));
+      settings.midiMap.push({ sig, action: r.action, cueId: r.cueId || null });
+    }
+    saveSettings();
+    if (changedCue) { markDirty(); renderInspector(); }
+    if (skipped) toast(isKey ? 'MIDI cues and volume rows need a MIDI message, not a computer key' : 'Volume rows need a CC fader or knob', 'warn');
+    renderPads(); renderInspector();
+    renderEditorRows(); renderEditorMsg();
+  }
+
+  function removeSelected() {
+    const rows = selectedRows();
+    if (!rows.length) { toast('Select a row first', 'warn'); return; }
+    if (rows.some(r => r.dir === 'OUT')) toast('A MIDI cue always sends a message – change it with Assign, or delete the cue', 'warn');
+    const keys = new Set(rows.filter(r => r.dir === 'IN').map(r => r.key));
+    settings.midiMap = settings.midiMap.filter(m => !keys.has(rowKey(m.action, m.cueId)));
+    saveSettings(); renderPads(); renderInspector();
+    renderEditorRows(); renderEditorMsg();
+  }
+
+  function showManual(open) {
+    const box = $('#meManual');
+    if (!open) { box.classList.add('hidden'); return; }
+    const m = ed.msg && !ed.msg.sig.startsWith('key:') ? ed.msg.sig.split(':') : ['note', '1', '60'];
+    box.innerHTML = `<div class="me-manual-box">
+      <div class="me-manual-title">Assign Manually</div>
+      <div class="settings-grid">
+        <label>MIDI Action</label><select id="mmType">${['note', 'cc', 'pc'].map(t => `<option value="${t}" ${t === m[0] ? 'selected' : ''}>${MIDI_KIND[t]}</option>`).join('')}</select>
+        <label>MIDI Ch.</label><input id="mmCh" type="number" min="1" max="16" value="${esc(m[1])}">
+        <label>MIDI Id (note / CC / program)</label><input id="mmId" type="number" min="0" max="127" value="${esc(m[2])}">
+      </div>
+      <div class="me-bar" style="justify-content:flex-end;margin-top:12px"><button class="me-btn" data-me="manual-cancel">Cancel</button><button class="me-btn primary" data-me="manual-ok">Assign</button></div>
+    </div>`;
+    box.classList.remove('hidden');
+    $('#mmId').focus();
+  }
+
+  function midiFileData() {
+    const cue = (id) => cueById(id);
+    return {
+      app: 'Unique AV Show Cue', kind: 'midi-map', version: 1,
+      map: settings.midiMap.map(m => ({ ...m, cueNumber: m.cueId && cue(m.cueId) ? cue(m.cueId).number : undefined })),
+      notes: settings.midiNotes || {}
+    };
+  }
+
+  async function editorCommand(cmd) {
+    switch (cmd) {
+      case 'close': closeModals(); break;
+      case 'assign': assignSig(ed.msg && ed.msg.sig, ed.msg && ed.msg.val); break;
+      case 'remove': removeSelected(); break;
+      case 'manual': if (!ed.sel.size) toast('Select a row first', 'warn'); else showManual(true); break;
+      case 'manual-cancel': showManual(false); break;
+      case 'manual-ok': {
+        const t = $('#mmType').value;
+        const ch = Math.max(1, Math.min(16, parseInt($('#mmCh').value, 10) || 1));
+        const id = Math.max(0, Math.min(127, parseInt($('#mmId').value, 10) || 0));
+        showManual(false);
+        ed.msg = { sig: `${t}:${ch}:${id}`, val: null };
+        assignSig(ed.msg.sig, null);
+        break;
+      }
+      case 'new': {
+        const r = await api.invoke('confirm', { message: 'Remove all MIDI and key mappings?', detail: 'GO, Stop All and every cue lose their MIDI and computer keys. MIDI cues keep what they send.', buttons: ['Remove all', 'Cancel'] });
+        if (r !== 0) return;
+        settings.midiMap = []; settings.midiNotes = {}; ed.msg = null;
+        saveSettings(); renderPads(); renderInspector(); renderMidiEditor();
+        break;
+      }
+      case 'save':
+        await api.invoke('save-text', { title: 'Save MIDI Mappings', defaultPath: `${show.name || 'Show'} MIDI.showmidi`, filters: [{ name: 'Show Cue MIDI mappings', extensions: ['showmidi'] }], text: JSON.stringify(midiFileData(), null, 2) });
+        break;
+      case 'export': {
+        const q = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+        const lines = [['MIDI', 'Channel Type', 'Ch. No.', 'Ch. Action', 'Ch. Note', 'MIDI Action', 'MIDI Ch.', 'MIDI Id', 'MIDI Val', 'OSC'].map(q).join(',')];
+        for (const r of visibleRows()) {
+          const { midi } = rowCells(r);
+          const osc = r.dir === 'OUT' ? (r.cue.port || 'first MIDI output') : r.osc;
+          (midi.length ? midi : [['', '', '', '']]).forEach(x => lines.push([r.dir, r.type, r.no, r.act, noteOf(r), ...x, osc].map(q).join(',')));
+        }
+        await api.invoke('save-text', { title: 'Export MIDI Mappings', defaultPath: `${show.name || 'Show'} MIDI.csv`, filters: [{ name: 'Spreadsheet (CSV)', extensions: ['csv'] }], text: lines.join('\r\n') });
+        break;
+      }
+      case 'open': {
+        const f = await api.invoke('open-text', { title: 'Open MIDI Mappings', filters: [{ name: 'Show Cue MIDI mappings', extensions: ['showmidi', 'json'] }] });
+        if (!f) return;
+        let data;
+        try { data = JSON.parse(f.text); } catch (e) { toast('That file is not a MIDI mappings file', 'err'); return; }
+        if (!data || !Array.isArray(data.map)) { toast('That file is not a MIDI mappings file', 'err'); return; }
+        // Mappings point at cues by id; fall back to the cue number for another show.
+        let lost = 0;
+        settings.midiMap = data.map.filter(m => m && typeof m.sig === 'string' && m.action).map(m => {
+          let cueId = m.cueId || null;
+          if (cueId && !cueById(cueId)) {
+            const c = m.cueNumber != null ? show.cues.find(x => String(x.number) === String(m.cueNumber)) : null;
+            cueId = c ? c.id : null;
+            if (!c) lost++;
+          }
+          return { sig: m.sig, action: m.action, cueId };
+        }).filter(m => !CUE_ACTIONS[m.action] || m.cueId);
+        settings.midiNotes = data.notes && typeof data.notes === 'object' ? data.notes : {};
+        saveSettings(); renderPads(); renderInspector(); renderMidiEditor();
+        toast(`Loaded ${settings.midiMap.length} mapping${settings.midiMap.length === 1 ? '' : 's'}${lost ? ` – ${lost} for cues not in this show were skipped` : ''}`);
+        break;
+      }
+    }
+  }
 
   $('#midiBody').addEventListener('click', (e) => {
-    const b = e.target.closest('button');
-    if (!b) return;
-    const d = b.dataset;
-    if (b.id === 'mClearLog') { midiLog.length = 0; renderMidiMonitor(); return; }
-    if (d.learn) {
-      midiLearn = midiLearn && midiLearn.action === d.learn ? null : { action: d.learn, fromPatch: true };
-    } else if (d.learnCue) {
-      midiLearn = midiLearn && midiLearn.cueId === d.learnCue ? null : { action: 'cue', cueId: d.learnCue, fromPatch: true };
-    } else if (d.unlearn) {
-      settings.midiMap = settings.midiMap.filter(m => m.action !== d.unlearn); saveSettings();
-    } else if (d.unlearnCue) {
-      settings.midiMap = settings.midiMap.filter(m => !(m.action === 'cue' && m.cueId === d.unlearnCue)); saveSettings(); renderPads(); renderInspector();
-    } else if (d.testCue) {
-      const c = cueById(d.testCue); if (c) sendMidiCue(c); return;
-    } else if (d.editCue) {
-      closeModals(); select(d.editCue); return;
-    } else return;
-    if ((d.learn || d.learnCue) && midiLearn && !midiAccess) toast('No MIDI devices found. Connect a MIDI controller first.', 'warn');
-    renderMidiPatch();
+    const b = e.target.closest('button[data-me]');
+    if (b) { editorCommand(b.dataset.me); return; }
+    if (e.target.closest('#meManual') && e.target.id === 'meManual') { showManual(false); return; }
+    const tr = e.target.closest('#meRows tr[data-key]');
+    if (!tr) return;
+    const k = tr.dataset.key;
+    if (ed.multi || e.metaKey || e.ctrlKey) { if (ed.sel.has(k)) ed.sel.delete(k); else ed.sel.add(k); }
+    else if (e.shiftKey && ed.anchor) {
+      const keys = visibleRows().map(r => r.key);
+      const [i, j] = [keys.indexOf(ed.anchor), keys.indexOf(k)].sort((x, y) => x - y);
+      ed.sel = new Set(keys.slice(i, j + 1));
+    } else ed.sel = new Set([k]);
+    if (!e.shiftKey) ed.anchor = k;
+    showEditorSel();
+  });
+
+  $('#midiBody').addEventListener('dblclick', (e) => {
+    const tr = e.target.closest('#meRows tr[data-key]');
+    if (tr && ed.msg) { ed.sel = new Set([tr.dataset.key]); ed.anchor = tr.dataset.key; assignSig(ed.msg.sig, ed.msg.val); }
+  });
+
+  $('#midiBody').addEventListener('change', (e) => {
+    const t = e.target;
+    if (t.dataset.filter) { ed.filters[t.dataset.filter] = t.checked; renderEditorRows(); return; }
+    if (t.id === 'meMulti') { ed.multi = t.checked; if (!t.checked && ed.sel.size > 1) ed.sel = new Set(ed.anchor ? [ed.anchor] : []); renderEditorRows(); return; }
+    if (t.id === 'meListen') { settings.midiInput = t.value; bindMidi(); updateMidiPill(); saveSettings(); renderMidiEditor(); }
+  });
+
+  $('#midiBody').addEventListener('input', (e) => {
+    if (e.target.id !== 'meNote' || ed.sel.size !== 1) return;
+    const k = [...ed.sel][0];
+    settings.midiNotes = settings.midiNotes || {};
+    if (e.target.value.trim()) settings.midiNotes[k] = e.target.value; else delete settings.midiNotes[k];
+    saveSettings();
+    const td = $(`#meRows tr[data-key="${CSS.escape(k)}"] .me-n`);
+    if (td) td.textContent = e.target.value;
+  });
+
+  $('#midiBody').addEventListener('keydown', (e) => {
+    if (e.target.closest('#meManual') && e.key === 'Enter') { e.preventDefault(); editorCommand('manual-ok'); }
+    if (e.target.id === 'meNote' && e.key === 'Enter') e.target.blur();
   });
 
   function runAction(action, cueId) {
@@ -1868,6 +2092,8 @@
       case 'prev': setStandby(standby - 1, true); break;
       case 'next': setStandby(standby + 1, true); break;
       case 'cue': { const c = cueById(cueId); if (c) padPress(c); break; }
+      case 'cue-pause': { const c = cueById(cueId); if (c) liveInsts(c).forEach(toggleInstPause); break; }
+      case 'cue-stop': { const c = cueById(cueId); if (c) liveInsts(c).forEach(i => stopInst(i)); break; }
     }
   }
 
@@ -1939,13 +2165,13 @@
         <label>Inputs found</label><span class="muted">${midiAccess ? (inputs.length ? esc(inputs.join(', ')) : 'None connected') : 'MIDI not available'}</span>
       </div>
       <div class="settings-grid" style="margin-top:8px">
-        <label>Mappings</label><div class="row"><button class="ibtn" id="sMidiPatch">Open MIDI Patch…</button><span class="muted">${settings.midiMap.length} mapped</span></div>
+        <label>Mappings</label><div class="row"><button class="ibtn" id="sMidiPatch">Open MIDI Editor…</button><span class="muted">${settings.midiMap.length} mapped</span></div>
       </div>
       <div class="settings-grid" style="margin-top:10px">
         <label>Pressing a playing pad</label>
         <select id="sPadToggle"><option value="1" ${settings.padToggle ? 'selected' : ''}>Stops it (fades out)</option><option value="0" ${settings.padToggle ? '' : 'selected'}>Plays it again on top</option></select>
       </div>
-      <p class="muted">The MIDI Patch window (click MIDI in the top bar) shows every control and cue with its MIDI and computer keys, the MIDI your cues send, and a live monitor. Learn accepts a MIDI note/button or a key on this computer's keyboard (Space, Enter, Esc, arrows, P and Delete are taken by the built-in shortcuts). To give a pad its own key, right-click the pad, use <b>Map keys</b> in the Pads view, or <b>Learn</b> in the cue's Follow section. The pad setting above also applies to a cue's keys.</p>
+      <p class="muted">The MIDI Editor (click MIDI in the top bar) lists every control and cue – Play, Pause, Stop and Volume – with its MIDI and computer keys, plus the MIDI your cues send. Learn accepts a MIDI note/button or a key on this computer's keyboard (Space, Enter, Esc, arrows, P and Delete are taken by the built-in shortcuts). To give a pad its own key, right-click the pad, use <b>Map keys</b> in the Pads view, or <b>Learn</b> in the cue's Follow section. The pad setting above also applies to a cue's keys.</p>
       <h3>Updates</h3>
       <div class="settings-grid">
         <label>Installed version</label><span>${esc(appVersion || '–')}</span>
@@ -2001,7 +2227,7 @@
     if (b.dataset.unlearnCue) { settings.midiMap = settings.midiMap.filter(m => !(m.action === 'cue' && m.cueId === b.dataset.unlearnCue)); saveSettings(); renderSettings(); renderInspector(); }
   });
 
-  function openModal(id) { $(id).classList.remove('hidden'); if (id === '#settingsModal') renderSettings(); if (id === '#midiModal') renderMidiPatch(); }
+  function openModal(id) { $(id).classList.remove('hidden'); if (id === '#settingsModal') renderSettings(); if (id === '#midiModal') { ed.msg = null; renderMidiEditor(); } }
   function closeModals() { $$('.modal').forEach(m => m.classList.add('hidden')); if (midiLearn && (!midiLearn.cueId || midiLearn.fromPatch)) { midiLearn = null; renderPads(); renderInspector(); } }
   $$('.modal').forEach(m => m.addEventListener('mousedown', (e) => { if (e.target === m || e.target.closest('[data-close]')) closeModals(); }));
 
@@ -2368,6 +2594,7 @@
   document.addEventListener('keydown', (e) => {
     const t = e.target;
     const typing = t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && !['checkbox', 'range', 'button'].includes(t.type)) || t.tagName === 'SELECT');
+    if (!typing && editorOpen() && editorKey(e)) return;
     if (!typing && learnKey(e)) return;
     if (wave && !e.ctrlKey && !e.metaKey && !e.altKey && wave.handleKey(e)) { e.preventDefault(); return; }
     if (e.key === 'Escape' && !$$('.modal').every(m => m.classList.contains('hidden'))) { closeModals(); return; }
@@ -2378,7 +2605,7 @@
     }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (!KEY_RESERVED[e.code]) {
-      const hits = settings.midiMap.filter(m => m.sig === `key:${e.code}` && m.action !== 'master');
+      const hits = settings.midiMap.filter(m => m.sig === `key:${e.code}` && !FADER_ACTIONS.includes(m.action));
       if (hits.length) {
         e.preventDefault();
         if (!e.repeat) { flash('#midiPill'); hits.forEach(m => runAction(m.action, m.cueId)); }
