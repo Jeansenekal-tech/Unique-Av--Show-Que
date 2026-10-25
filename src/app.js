@@ -1053,7 +1053,11 @@
     if (c) fire(c, true);
   }
 
-  async function fire(c, withFollow) {
+  // Each trigger (GO, pad, MIDI, OSC…) starts a group; cues it starts "with"
+  // itself join that group, so one-at-a-time never stops them.
+  let fireGroup = 0;
+  async function fire(c, withFollow, group) {
+    const g = group || ++fireGroup;
     let inst = null;
     switch (c.type) {
       case 'audio': inst = await playAudio(c); break;
@@ -1067,21 +1071,40 @@
       case 'osc': sendOscCue(c); break;
       case 'midi': sendMidiCue(c); break;
     }
+    if (inst) { inst.group = g; onePlaying(inst); }
     const instant = ['stop', 'black', 'osc', 'midi'].includes(c.type);
     if (!withFollow || c.follow === 'off') return;
     if (!instant && !inst) return; // failed to start
-    if (c.follow === 'start' || instant) scheduleFollow(c, c.followDelay);
+    if (c.follow === 'start' || instant) scheduleFollow(c, c.followDelay, g);
     else if (inst) inst.followOnEnd = true;
   }
 
-  function scheduleFollow(c, delay) {
+  // Playback setting (saved with the show): when a cue starts, fade out or
+  // stop whatever an earlier trigger is still playing.
+  const playMode = () => show.playMode || 'all';
+  const playFade = () => (show.playFade == null ? 2 : show.playFade);
+  function onePlaying(inst) {
+    if (playMode() === 'all') return;
+    const f = playMode() === 'stop' ? 0 : playFade();
+    for (const i of [...active.values()]) {
+      if (i !== inst && i.group !== inst.group && i.state !== 'stopping') stopInst(i, f);
+    }
+  }
+  function renderPlayMode() {
+    const el = $('#playModeTag');
+    const m = playMode();
+    el.hidden = m === 'all';
+    el.textContent = m === 'stop' ? '1 at a time · stop' : `1 at a time · fade ${playFade()}s`;
+  }
+
+  function scheduleFollow(c, delay, group) {
     const fromIdx = indexOf(c.id);
     if (fromIdx < 0) return;
     const run = () => {
       const target = show.cues[fromIdx + 1];
       if (!target) return;
       if (standby <= fromIdx + 1) setStandby(fromIdx + 2, true);
-      fire(target, true);
+      fire(target, true, group);
     };
     if (!delay) { run(); return; }
     const t = setTimeout(() => { followTimers.delete(t); run(); }, delay * 1000);
@@ -2123,6 +2146,13 @@
     const noLabels = devs.length && devs.every(d => !d.label);
     const b = $('#settingsBody');
     b.innerHTML = `
+      <h3>Playback <span class="h-sub">saved with this show</span></h3>
+      <div class="settings-grid">
+        <label>When a cue starts</label>
+        <select id="sPlayMode">${[['all', 'Other cues keep playing'], ['fade', 'The previous cue fades out'], ['stop', 'The previous cue stops at once']].map(([v, l]) => `<option value="${v}" ${v === playMode() ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <label>Fade-out time (s)</label><input type="number" id="sPlayFade" min="0" max="60" step="0.5" value="${playFade()}" ${playMode() === 'fade' ? '' : 'disabled'}>
+      </div>
+      <p class="muted">Only one cue plays at a time: starting an audio, video or image cue (with GO, a pad, MIDI, OSC or a key) fades out or stops whatever is still playing. Cues set to <i>Follow: start with</i> still play together.</p>
       <h3>Video output</h3>
       <div class="settings-grid">
         <label>Output screen</label>
@@ -2199,6 +2229,8 @@
       case 'sFbHost': settings.fbHost = t.value.trim(); lastFb = null; sendFeedback(); break;
       case 'sFbPort': settings.fbPort = parseInt(t.value, 10) || 53001; lastFb = null; sendFeedback(); break;
       case 'sMidiIn': settings.midiInput = t.value; bindMidi(); updateMidiPill(); break;
+      case 'sPlayMode': show.playMode = t.value; markDirty(); renderPlayMode(); renderSettings(); return;
+      case 'sPlayFade': show.playFade = Math.max(0, Math.min(60, parseFloat(t.value) || 0)); markDirty(); renderPlayMode(); return;
       case 'sPadToggle': settings.padToggle = t.value === '1'; break;
       case 'sAutoUpd': settings.autoUpdate = t.checked; saveSettings(); api.send('update-config', { auto: t.checked }); break;
     }
@@ -2280,7 +2312,7 @@
     if (!show.mixer || typeof show.mixer !== 'object') show.mixer = {};
     setMaster(show.masterVolume == null ? 100 : show.masterVolume);
     renderList(); renderInspector(); updateTitle(); renderShowFile();
-    renderMixer(true); sendMixer();
+    renderMixer(true); sendMixer(); renderPlayMode();
     if (missing.size) toast(`${missing.size} media file${missing.size > 1 ? 's are' : ' is'} missing – choose them again in the cue inspector`, 'warn');
   }
 
@@ -2291,7 +2323,7 @@
     dirty = false; api.send('set-dirty', false);
     $('#showName').value = show.name;
     setMaster(100); renderList(); renderInspector(); updateTitle(); renderShowFile();
-    renderMixer(true); sendMixer();
+    renderMixer(true); sendMixer(); renderPlayMode();
   }
 
   async function openCmd() {
@@ -2355,6 +2387,7 @@
   $('#lockBtn').addEventListener('click', blurAfter(() => setLocked(!locked)));
   $('#settingsBtn').addEventListener('click', blurAfter(() => openModal('#settingsModal')));
   $('#midiPill').addEventListener('click', blurAfter(() => openModal('#midiModal')));
+  $('#playModeTag').addEventListener('click', blurAfter(() => openModal('#settingsModal')));
   $('#updPill').addEventListener('click', blurAfter(() => { if (upd.state === 'ready' || upd.state === 'available') installUpdate(); else openModal('#settingsModal'); }));
   $('#upBtn').addEventListener('click', blurAfter(() => moveSelected(-1)));
   $('#downBtn').addEventListener('click', blurAfter(() => moveSelected(1)));
