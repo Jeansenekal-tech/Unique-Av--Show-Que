@@ -451,7 +451,8 @@ function buildMenu() {
         { role: 'undo' }, { role: 'redo' }, { type: 'separator' },
         { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { type: 'separator' },
         { label: 'Duplicate Cue', accelerator: 'CmdOrCtrl+D', click: send('duplicate') },
-        { label: 'Renumber Cues', click: send('renumber') }
+        { label: 'Renumber Cues', click: send('renumber') },
+        { label: 'Change Output for All Cues…', click: send('all-outputs') }
       ]
     },
     {

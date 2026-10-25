@@ -2168,6 +2168,8 @@
         <select id="sDefDev">${deviceOptions(settings.defaultDevice).map(([v, l]) => `<option value="${esc(v)}" ${v === settings.defaultDevice ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
         <label>Default channels for new cues</label>
         <div class="row"><select id="sDefRoute"></select><button class="ibtn" id="sTone" title="Plays a short beep on this output and these channels">🔊 Test</button></div>
+        <label>Output for all cues</label>
+        <div class="row"><select id="sAllDev">${deviceOptions(settings.defaultDevice).map(([v, l]) => `<option value="${esc(v)}" ${v === settings.defaultDevice ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select><select id="sAllRoute"></select><button class="ibtn" id="sAllApply" title="Give every audio and video cue in this show this output and these channels">Apply to all cues</button></div>
         <label>Output devices</label>
         <div class="row"><span class="muted">${devs.length} found${noLabels ? ' (names hidden)' : ''}</span><button class="ibtn" id="sUnlock">${noLabels ? 'Show device names' : 'Refresh'}</button></div>
         <label>Stop All fade (s)</label><input type="number" id="sStopFade" min="0" step="0.5" value="${settings.stopFade}">
@@ -2212,6 +2214,7 @@
       <p class="muted">Updates download in the background and install when you close the app, or straight away with Restart &amp; update. The app never restarts by itself during a show.</p>`;
     renderUpdate();
     fillRouteSelect($('#sDefRoute'), null, settings.defaultDevice, settings.defaultRoute);
+    fillRouteSelect($('#sAllRoute'), null, settings.defaultDevice, settings.defaultRoute);
   }
 
   $('#settingsBody').addEventListener('change', async (e) => {
@@ -2229,6 +2232,8 @@
       case 'sFbHost': settings.fbHost = t.value.trim(); lastFb = null; sendFeedback(); break;
       case 'sFbPort': settings.fbPort = parseInt(t.value, 10) || 53001; lastFb = null; sendFeedback(); break;
       case 'sMidiIn': settings.midiInput = t.value; bindMidi(); updateMidiPill(); break;
+      case 'sAllDev': fillRouteSelect($('#sAllRoute'), null, t.value, $('#sAllRoute').value); return;
+      case 'sAllRoute': return;
       case 'sPlayMode': show.playMode = t.value; markDirty(); renderPlayMode(); renderSettings(); return;
       case 'sPlayFade': show.playFade = Math.max(0, Math.min(60, parseFloat(t.value) || 0)); markDirty(); renderPlayMode(); return;
       case 'sPadToggle': settings.padToggle = t.value === '1'; break;
@@ -2245,6 +2250,11 @@
       if (!outputOpen) api.send('output-open', settings.outputDisplay);
       setTimeout(() => api.send('output-cmd', { cmd: { cmd: 'identify' } }), outputOpen ? 0 : 900);
       return;
+    }
+    if (b.id === 'sAllApply') {
+      if (locked) { toast('Unlock the show (Edit) to change cue outputs', 'warn'); return; }
+      await copyRoute({ device: $('#sAllDev').value, route: $('#sAllRoute').value }, show.cues, 'in the show');
+      renderInspector(); return;
     }
     if (b.id === 'sMidiPatch') { closeModals(); openModal('#midiModal'); return; }
     if (b.id === 'sUpdCheck') { checkUpdates(); return; }
@@ -2369,6 +2379,11 @@
       case 'output-close': api.send('output-close'); break;
       case 'settings': openModal('#settingsModal'); break;
       case 'help': openModal('#helpModal'); break;
+      case 'all-outputs': {
+        closeModals(); openModal('#settingsModal');
+        setTimeout(() => { const el = $('#sAllDev'); if (el) { el.scrollIntoView({ block: 'center' }); el.focus(); } }, 100);
+        break;
+      }
       case 'midi-patch': closeModals(); openModal('#midiModal'); break;
       case 'check-updates': openModal('#settingsModal'); checkUpdates(); break;
     }
