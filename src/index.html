@@ -221,7 +221,17 @@
         </table>
         <p class="muted">Stream Deck: use the <b>Website</b> action, paste e.g. <code>http://localhost:53000/cue/3</code> and tick <b>Access in background</b>.</p>
         <h3>Feedback</h3>
-        <p class="muted">When a feedback host is set, the app sends <code>/showcue/standby &lt;number&gt; &lt;name&gt;</code> every time the standby cue changes.</p>
+        <p class="muted">Set <b>Settings → OSC → Feedback to</b> (e.g. <code>127.0.0.1</code> port <code>53001</code> for Companion on this computer). Values are sent whenever they change:</p>
+        <table>
+          <tr><td><code>/showcue/cue/&lt;n&gt;/playing</code></td><td>1 while cue n plays, else 0</td></tr>
+          <tr><td><code>/showcue/cue/&lt;n&gt;/paused</code></td><td>1 while cue n is paused</td></tr>
+          <tr><td><code>/showcue/cue/&lt;n&gt;/remaining</code></td><td>Time left, e.g. "1:23" ("" when stopped)</td></tr>
+          <tr><td><code>/showcue/standby/number</code> · <code>/standby/name</code></td><td>The standby cue (also <code>/showcue/standby &lt;number&gt; &lt;name&gt;</code>)</td></tr>
+          <tr><td><code>/showcue/playing</code> · <code>/playing/number</code> · <code>/playing/name</code></td><td>How many cues play, and the latest one</td></tr>
+          <tr><td><code>/showcue/remaining</code></td><td>Time left of the latest cue</td></tr>
+          <tr><td><code>/showcue/master</code></td><td>Master volume 0-100</td></tr>
+        </table>
+        <p class="muted">Send <code>/showcue/refresh</code> (or click <i>Send all now</i>) to get everything again, e.g. after Companion restarts.</p>
       </div>
     </div>
   </div>

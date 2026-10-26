@@ -14,7 +14,8 @@
   const CUE_ACTIONS = { play: 'play', start: 'play', go: 'play', fire: 'play', stop: 'stop', pause: 'pause', resume: 'resume', volume: 'volume', vol: 'volume' };
   const SIMPLE = {
     next: 'next', setnext: 'next', prev: 'prev', previous: 'prev', setprev: 'prev',
-    playnext: 'go', stopall: 'stopall', panic: 'panic', pauseall: 'pauseall', resumeall: 'resumeall'
+    playnext: 'go', stopall: 'stopall', panic: 'panic', pauseall: 'pauseall', resumeall: 'resumeall',
+    refresh: 'refresh', feedback: 'refresh'
   };
 
   const isBlank = (v) => v === undefined || v === null || v === '' || typeof v === 'boolean';
@@ -102,7 +103,7 @@
       case 'cue': return c.action === 'volume' ? `Cue ${c.cue} volume ${Math.round(c.value)}` : `Cue ${c.cue} ${c.action}`;
       case 'standby': return `Standby cue ${c.cue}`;
       case 'master': return `Master ${Math.round(c.value)}`;
-      default: return { next: 'Next', prev: 'Previous', stopall: 'Stop all', panic: 'Panic', pauseall: 'Pause all', resumeall: 'Resume all' }[c.cmd] || c.cmd;
+      default: return { next: 'Next', prev: 'Previous', stopall: 'Stop all', panic: 'Panic', pauseall: 'Pause all', resumeall: 'Resume all', refresh: 'Feedback resent' }[c.cmd] || c.cmd;
     }
   }
 

@@ -1601,6 +1601,7 @@
     const cue = idx >= 0 ? show.cues[idx] : null;
     switch (c.cmd) {
       case 'release': break; // a button's 0 on release
+      case 'refresh': resendFeedback(); break;
       case 'go': if (cue) setStandby(idx, true); go(); break;
       case 'standby': setStandby(idx, true); break;
       case 'next': setStandby(standby + 1, true); break;
@@ -1630,15 +1631,47 @@
   }
   api.on('osc-in', handleOsc);
 
-  let lastFb = null;
+  // ------------------------------------------------------------------ OSC feedback
+  // Sent to Settings → OSC → Feedback to (e.g. Companion), only when a value
+  // changes: standby, what's playing, each cue's playing / paused / time left,
+  // and the master. /showcue/refresh (or "Send all now") resends everything.
+  const fbSent = new Map(); // address -> last value sent
+  function fbSend(address, args) {
+    const v = JSON.stringify(args);
+    if (fbSent.get(address) === v) return;
+    fbSent.set(address, v);
+    api.send('osc-send', { host: settings.fbHost, port: settings.fbPort || 53001, address, args });
+  }
+  const clock = (sec) => { const t = Math.max(0, Math.ceil(sec)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
+  const remainingOf = (inst) => (inst && inst.dur > 0 ? clock(inst.dur - Math.max(0, inst.t || 0)) : '');
+
   function sendFeedback() {
     if (!settings.fbHost) return;
-    const c = show.cues[standby];
-    const key = c ? c.id + c.number + displayName(c) : 'end';
-    if (key === lastFb) return;
-    lastFb = key;
-    api.send('osc-send', { host: settings.fbHost, port: settings.fbPort || 53001, address: '/showcue/standby', args: c ? [String(c.number), displayName(c)] : ['', 'End of cue list'] });
+    const sb = show.cues[standby];
+    fbSend('/showcue/standby', sb ? [String(sb.number), displayName(sb)] : ['', 'End of cue list']);
+    fbSend('/showcue/standby/number', [sb ? String(sb.number) : '']);
+    fbSend('/showcue/standby/name', [sb ? displayName(sb) : 'End of cue list']);
+
+    const live = [...active.values()].filter(i => i.state !== 'stopping');
+    const latest = live[live.length - 1];
+    fbSend('/showcue/playing', [live.length]);
+    fbSend('/showcue/playing/number', [latest ? String(latest.cue.number) : '']);
+    fbSend('/showcue/playing/name', [latest ? displayName(latest.cue) : '']);
+    fbSend('/showcue/remaining', [remainingOf(latest)]);
+    fbSend('/showcue/master', [show.masterVolume == null ? 100 : show.masterVolume]);
+
+    for (const c of show.cues) {
+      if (String(c.number || '').trim() === '') continue;
+      const mine = live.filter(i => i.cue.id === c.id);
+      const playing = mine.some(i => i.state !== 'paused');
+      const base = `/showcue/cue/${String(c.number).trim()}`;
+      fbSend(base + '/playing', [playing ? 1 : 0]);
+      fbSend(base + '/paused', [mine.length && !playing ? 1 : 0]);
+      fbSend(base + '/remaining', [remainingOf(mine[mine.length - 1])]);
+    }
   }
+  function resendFeedback() { fbSent.clear(); sendFeedback(); }
+  setInterval(sendFeedback, 250);
 
   async function applyOsc() {
     if (settings.oscEnabled) oscStatus = await api.invoke('osc-start', settings.oscPort);
@@ -2288,8 +2321,9 @@
         <label>OSC input</label><label class="row" style="color:var(--text)"><input type="checkbox" id="sOscOn" ${settings.oscEnabled ? 'checked' : ''}> Listen for OSC on UDP port <input type="number" id="sOscPort" style="width:90px" min="1" max="65535" value="${settings.oscPort}"></label>
         <label>Status</label><span class="${oscStatus.ok ? '' : 'muted'}">${oscStatus.ok ? `Listening on port ${settings.oscPort}` : oscStatus.off ? 'Off' : `Not listening: ${esc(oscStatus.error || '')}`}</span>
         <label>Last received</label><div id="sOscLast" class="osc-log"></div>
-        <label>Feedback to</label><div class="row"><input type="text" id="sFbHost" placeholder="IP address (blank = off)" value="${esc(settings.fbHost)}"><input type="number" id="sFbPort" style="width:90px" value="${settings.fbPort}"></div>
+        <label>Feedback to</label><div class="row"><input type="text" id="sFbHost" placeholder="IP address (blank = off), e.g. 127.0.0.1" value="${esc(settings.fbHost)}"><input type="number" id="sFbPort" style="width:90px" value="${settings.fbPort}"><button class="ibtn" id="sFbAll" title="Send the current state of everything again">Send all now</button></div>
       </div>
+      <p class="muted">Feedback (for Companion button colours and text): <code>/showcue/cue/&lt;n&gt;/playing</code> 1/0 · <code>/cue/&lt;n&gt;/paused</code> 1/0 · <code>/cue/&lt;n&gt;/remaining</code> "1:23" · <code>/showcue/standby/number</code> · <code>/standby/name</code> · <code>/showcue/playing</code> (count) · <code>/playing/name</code> · <code>/showcue/remaining</code> · <code>/showcue/master</code>. Sent when they change; <code>/showcue/refresh</code> resends all. Use a different port from Show Cue's own (e.g. 53001).</p>
       <h3>Stream Deck / web control</h3>
       <div class="settings-grid">
         <label>Web control</label><label class="row" style="color:var(--text)"><input type="checkbox" id="sHttpOn" ${settings.httpEnabled ? 'checked' : ''}> Accept commands on port <input type="number" id="sHttpPort" style="width:90px" min="1" max="65535" value="${settings.httpPort}"></label>
@@ -2336,8 +2370,8 @@
       case 'sOscPort': settings.oscPort = parseInt(t.value, 10) || 53000; saveSettings(); await applyOsc(); renderSettings(); return;
       case 'sHttpOn': settings.httpEnabled = t.checked; saveSettings(); await applyHttp(); renderSettings(); return;
       case 'sHttpPort': settings.httpPort = parseInt(t.value, 10) || 53000; saveSettings(); await applyHttp(); renderSettings(); return;
-      case 'sFbHost': settings.fbHost = t.value.trim(); lastFb = null; sendFeedback(); break;
-      case 'sFbPort': settings.fbPort = parseInt(t.value, 10) || 53001; lastFb = null; sendFeedback(); break;
+      case 'sFbHost': settings.fbHost = t.value.trim(); resendFeedback(); break;
+      case 'sFbPort': settings.fbPort = parseInt(t.value, 10) || 53001; resendFeedback(); break;
       case 'sMidiIn': settings.midiInput = t.value; bindMidi(); updateMidiPill(); break;
       case 'sAllDev': fillRouteSelect($('#sAllRoute'), null, t.value, $('#sAllRoute').value); return;
       case 'sAllRoute': return;
@@ -2363,6 +2397,7 @@
       await copyRoute({ device: $('#sAllDev').value, route: $('#sAllRoute').value }, show.cues, 'in the show');
       renderInspector(); return;
     }
+    if (b.id === 'sFbAll') { if (!settings.fbHost) toast('Enter the IP address to send feedback to first', 'warn'); else { resendFeedback(); toast('Feedback sent'); } return; }
     if (b.id === 'sMidiPatch') { closeModals(); openModal('#midiModal'); return; }
     if (b.id === 'sUpdCheck') { checkUpdates(); return; }
     if (b.id === 'sUpdInstall') { installUpdate(); return; }
@@ -2429,7 +2464,7 @@
     if (!show.mixer || typeof show.mixer !== 'object') show.mixer = {};
     setMaster(show.masterVolume == null ? 100 : show.masterVolume);
     renderList(); renderInspector(); updateTitle(); renderShowFile();
-    renderMixer(true); sendMixer(); renderPlayMode();
+    renderMixer(true); sendMixer(); renderPlayMode(); resendFeedback();
     if (missing.size) toast(`${missing.size} media file${missing.size > 1 ? 's are' : ' is'} missing – choose them again in the cue inspector`, 'warn');
   }
 
@@ -2440,7 +2475,7 @@
     dirty = false; api.send('set-dirty', false);
     $('#showName').value = show.name;
     setMaster(100); renderList(); renderInspector(); updateTitle(); renderShowFile();
-    renderMixer(true); sendMixer(); renderPlayMode();
+    renderMixer(true); sendMixer(); renderPlayMode(); resendFeedback();
   }
 
   async function openCmd() {
