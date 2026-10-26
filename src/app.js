@@ -1571,16 +1571,26 @@
   }
 
   // OSC and web control share one reader (command.js), so /cue/3, "cue 3" and
-  // /cue + 3 all work. The last message and what it did show in Settings.
-  let lastOsc = null;
+  // /cue + 3 all work. Settings → OSC lists the latest messages and what they did.
+  // Messages that aren't Show Cue addresses (another app on the same port, e.g.
+  // MiX16 echoing its MIDI as OSC) are listed there but never pop up.
+  const oscLog = []; // newest first
+  let lastOscWarn = 0;
+  const OUR_PREFIX = /^\/(showcue|mix16showcue|mix16apps)(\/|\s|$)/i;
   function handleOsc(m) {
     flash('#oscPill');
     const src = m.from === 'http' ? 'Stream Deck' : 'OSC';
     const text = `${m.address}${m.args && m.args.length ? ' ' + m.args.map(a => JSON.stringify(a)).join(' ') : ''}`;
     const c = ShowCommand.parse(m.address, m.args, m.types);
-    const result = c ? runCommand(c) : 'not understood';
-    lastOsc = { text, result, ok: !!c && !result.startsWith('no cue'), time: new Date().toTimeString().slice(0, 8), src };
-    if (!lastOsc.ok) toast(`${src}: ${text} – ${result}`, 'warn');
+    const foreign = !c && !OUR_PREFIX.test(String(m.address || '').trim());
+    const result = c ? runCommand(c) : foreign ? 'ignored (not a Show Cue address)' : 'not understood';
+    const ok = !!c && !result.startsWith('no cue');
+    oscLog.unshift({ text, result, ok, foreign, time: new Date().toTimeString().slice(0, 8), src, from: m.from && m.from !== 'http' ? m.from : '' });
+    if (oscLog.length > 8) oscLog.length = 8;
+    if (!ok && !foreign && Date.now() - lastOscWarn > 3000) {
+      lastOscWarn = Date.now();
+      toast(`${src}: ${text} – ${result}. See Settings → OSC.`, 'warn');
+    }
     const el = $('#sOscLast');
     if (el) renderOscLast(el);
   }
@@ -1613,8 +1623,9 @@
   }
 
   function renderOscLast(el) {
-    el.className = lastOsc ? (lastOsc.ok ? '' : 'osc-bad') : 'muted';
-    el.textContent = lastOsc ? `${lastOsc.time} ${lastOsc.src}: ${lastOsc.text} → ${lastOsc.result}` : 'Nothing received yet';
+    el.innerHTML = oscLog.length
+      ? oscLog.map(l => `<div class="${l.ok ? '' : l.foreign ? 'osc-foreign' : 'osc-bad'}">${l.time} ${esc(l.src)}${l.from ? ` from ${esc(l.from)}` : ''}: ${esc(l.text)} → ${esc(l.result)}</div>`).join('')
+      : '<span class="muted">Nothing received yet</span>';
   }
   api.on('osc-in', handleOsc);
 
@@ -2275,7 +2286,7 @@
       <div class="settings-grid">
         <label>OSC input</label><label class="row" style="color:var(--text)"><input type="checkbox" id="sOscOn" ${settings.oscEnabled ? 'checked' : ''}> Listen for OSC on UDP port <input type="number" id="sOscPort" style="width:90px" min="1" max="65535" value="${settings.oscPort}"></label>
         <label>Status</label><span class="${oscStatus.ok ? '' : 'muted'}">${oscStatus.ok ? `Listening on port ${settings.oscPort}` : oscStatus.off ? 'Off' : `Not listening: ${esc(oscStatus.error || '')}`}</span>
-        <label>Last received</label><span id="sOscLast"></span>
+        <label>Last received</label><div id="sOscLast" class="osc-log"></div>
         <label>Feedback to</label><div class="row"><input type="text" id="sFbHost" placeholder="IP address (blank = off)" value="${esc(settings.fbHost)}"><input type="number" id="sFbPort" style="width:90px" value="${settings.fbPort}"></div>
       </div>
       <h3>Stream Deck / web control</h3>
