@@ -8,6 +8,7 @@
 //   /showcue/cue/3/stop   /cue/3/pause   /cue/3/resume   /cue/3/volume 80
 //   /showcue/stop         (all)   /showcue/stop/3 (one cue)   – same for pause / resume
 //   /showcue/master 80    /showcue/master 0.8 (0–1 floats are scaled to 0–100)
+//   Companion-style buttons: /showcue/cue/3 + 1 plays, + 0 (release) is ignored
 (function (root) {
   const PREFIXES = ['showcue', 'mix16showcue', 'mix16apps', 'playlist'];
   const CUE_ACTIONS = { play: 'play', start: 'play', go: 'play', fire: 'play', stop: 'stop', pause: 'pause', resume: 'resume', volume: 'volume', vol: 'volume' };
@@ -26,6 +27,12 @@
     return Math.max(0, Math.min(100, unit ? n * 100 : n));
   }
 
+  // Button controllers (Companion, TouchOSC…) send 1 on press and 0 on release
+  // as an OSC argument: a 0/1 (or true/false) argument is read as that press,
+  // unless the command still needs a number (a cue or a volume).
+  const pressLike = (v) => typeof v === 'boolean' || v === 0 || v === 1;
+  const released = (v) => v === 0 || v === false;
+
   function parse(address, args, types) {
     const raw = String(address || '').trim();
     if (!raw) return null;
@@ -35,35 +42,52 @@
     if (parts[0] === 'set' && parts[1]) parts.splice(0, 2, 'set' + parts[1]);
     if (!parts.length) return null;
     const head = parts[0];
-    // Everything after the command: path parts, words after a space, then OSC arguments.
-    const vals = [...parts.slice(1), ...words.slice(1), ...(args || [])];
-    const vtypes = [...parts.slice(1).map(() => 's'), ...words.slice(1).map(() => 's'), ...((types || '').split(''))];
-    while (vals.length && isBlank(vals[0])) { vals.shift(); vtypes.shift(); }
+    // Numbers and words in the address (after "/" or a space) …
+    const pv = [...parts.slice(1), ...words.slice(1)];
+    // … and the OSC arguments, kept separate so 0/1 can mean released/pressed.
+    const av = (args || []).filter(v => v !== null && v !== undefined && v !== '');
+    const at = (types || '').split('').filter(t => t !== 'N');
+    const RELEASE = { cmd: 'release' };
 
-    const cueCmd = (cue, action, value, vtype) => {
-      if (isBlank(cue)) return null;
-      if (action === 'volume') {
-        const v = level(value, vtype);
-        if (v === null) return null;
-        return { cmd: 'cue', cue: String(cue), action, value: v };
-      }
-      return { cmd: 'cue', cue: String(cue), action: action || 'play' };
+    const volume = (cue, v, t) => {
+      const lv = level(v, t);
+      return lv === null || isBlank(cue) ? null : { cmd: 'cue', cue: String(cue), action: 'volume', value: lv };
     };
 
-    if (SIMPLE[head]) return { cmd: SIMPLE[head] };
+    if (SIMPLE[head]) return av.length && released(av[0]) ? RELEASE : { cmd: SIMPLE[head] };
     switch (head) {
-      case 'go': return isBlank(vals[0]) ? { cmd: 'go' } : { cmd: 'go', cue: String(vals[0]) };
-      case 'cue': case 'fire': case 'play': {
-        const action = CUE_ACTIONS[String(vals[1] || 'play').toLowerCase()];
-        if (!action) return null;
-        return cueCmd(vals[0], action, vals[2], vtypes[2]);
+      case 'go': {
+        if (!isBlank(pv[0])) return av.length && released(av[0]) ? RELEASE : { cmd: 'go', cue: String(pv[0]) };
+        if (!av.length || pressLike(av[0])) return av.length && released(av[0]) ? RELEASE : { cmd: 'go' };
+        return { cmd: 'go', cue: String(av[0]) };
       }
-      case 'stop': case 'pause': case 'resume':
-        return isBlank(vals[0]) ? { cmd: head + 'all' } : cueCmd(vals[0], head);
-      case 'volume': return cueCmd(vals[0], 'volume', vals[1], vtypes[1]);
-      case 'setgo': case 'standby': return isBlank(vals[0]) ? null : { cmd: 'standby', cue: String(vals[0]) };
+      case 'cue': case 'fire': case 'play': {
+        // The cue number: from the address, else the first argument.
+        let cue = pv[0], rest = pv.slice(1), arg = av, argT = at;
+        if (isBlank(cue)) { cue = av[0]; arg = av.slice(1); argT = at.slice(1); }
+        if (isBlank(cue)) return null;
+        const word = rest.length ? String(rest[0]).toLowerCase() : 'play';
+        const action = CUE_ACTIONS[word];
+        if (!action) return null;
+        if (action === 'volume') return rest.length > 1 ? volume(cue, rest[1], 's') : volume(cue, arg[0], argT[0]);
+        if (arg.length && released(arg[0])) return RELEASE;
+        return { cmd: 'cue', cue: String(cue), action };
+      }
+      case 'stop': case 'pause': case 'resume': {
+        if (!isBlank(pv[0])) return av.length && released(av[0]) ? RELEASE : { cmd: 'cue', cue: String(pv[0]), action: head };
+        if (!av.length || pressLike(av[0])) return av.length && released(av[0]) ? RELEASE : { cmd: head + 'all' };
+        return { cmd: 'cue', cue: String(av[0]), action: head };
+      }
+      case 'volume': {
+        if (!isBlank(pv[0])) return pv.length > 1 ? volume(pv[0], pv[1], 's') : volume(pv[0], av[0], at[0]);
+        return volume(av[0], av[1], at[1]);
+      }
+      case 'setgo': case 'standby': {
+        if (!isBlank(pv[0])) return av.length && released(av[0]) ? RELEASE : { cmd: 'standby', cue: String(pv[0]) };
+        return isBlank(av[0]) ? null : { cmd: 'standby', cue: String(av[0]) };
+      }
       case 'master': case 'setmaster': {
-        const v = level(vals[0], vtypes[0]);
+        const v = !isBlank(pv[0]) ? level(pv[0], 's') : level(av[0], at[0]);
         return v === null ? null : { cmd: 'master', value: v };
       }
       default: return null;
@@ -73,6 +97,7 @@
   function describe(c) {
     if (!c) return '';
     switch (c.cmd) {
+      case 'release': return 'button released (ignored)';
       case 'go': return c.cue ? `GO from cue ${c.cue}` : 'GO';
       case 'cue': return c.action === 'volume' ? `Cue ${c.cue} volume ${Math.round(c.value)}` : `Cue ${c.cue} ${c.action}`;
       case 'standby': return `Standby cue ${c.cue}`;
