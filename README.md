@@ -94,7 +94,9 @@ npm run dist:mac   # on a Mac: build the Apple Silicon DMG into dist/
 | `/showcue/pause` · `/showcue/resume` | Pause / resume everything |
 | `/showcue/master` + 0-100 | Master volume (0.0–1.0 floats work too; or `/showcue/master/80`) |
 
-A number can go in the address (`/showcue/cue/3`), after a space (`/showcue/cue 3`) or as an OSC argument (`/showcue/cue` + `3`) – all the same. **Companion / button controllers:** a `1` sent with a command means *pressed* (it runs) and `0` means *released* (ignored), so Companion buttons can send their on/off value – e.g. `/showcue/cue/3` + `1`. Settings → OSC shows the last message received and what it did; anything not understood pops up a warning. `/mix16showcue/...` equivalents also work. With a feedback host set, the app sends `/showcue/standby <number> <name>` when standby changes.
+A number can go in the address (`/showcue/cue/3`), after a space (`/showcue/cue 3`) or as an OSC argument (`/showcue/cue` + `3`) – all the same. **Companion / button controllers:** a `1` sent with a command means *pressed* (it runs) and `0` means *released* (ignored), so Companion buttons can send their on/off value – e.g. `/showcue/cue/3` + `1`. Settings → OSC shows the last message received and what it did; anything not understood pops up a warning. `/mix16showcue/...` equivalents also work.
+
+**Feedback for Companion** – set *Settings → OSC → Feedback to* (e.g. `127.0.0.1`, port `53001`, a different port from Show Cue's own). Show Cue then sends, whenever a value changes: `/showcue/cue/<n>/playing` 1/0, `/showcue/cue/<n>/paused` 1/0, `/showcue/cue/<n>/remaining` "1:23", `/showcue/standby/number`, `/showcue/standby/name` (and `/showcue/standby <number> <name>`), `/showcue/playing` (count), `/showcue/playing/number`, `/showcue/playing/name`, `/showcue/remaining` and `/showcue/master`. `/showcue/refresh` (or *Send all now*) resends everything. In Companion, have its OSC connection listen on that port and use these as feedbacks (button colour when `/playing` is 1) or variables (button text).
 
 ### Stream Deck
 
