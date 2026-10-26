@@ -1600,6 +1600,7 @@
     if (c.cue != null && idx < 0) return `no cue ${c.cue}`;
     const cue = idx >= 0 ? show.cues[idx] : null;
     switch (c.cmd) {
+      case 'release': break; // a button's 0 on release
       case 'go': if (cue) setStandby(idx, true); go(); break;
       case 'standby': setStandby(idx, true); break;
       case 'next': setStandby(standby + 1, true); break;

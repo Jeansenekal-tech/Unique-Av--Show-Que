@@ -94,7 +94,7 @@ npm run dist:mac   # on a Mac: build the Apple Silicon DMG into dist/
 | `/showcue/pause` · `/showcue/resume` | Pause / resume everything |
 | `/showcue/master` + 0-100 | Master volume (0.0–1.0 floats work too; or `/showcue/master/80`) |
 
-A number can go in the address (`/showcue/cue/3`), after a space (`/showcue/cue 3`) or as an OSC argument (`/showcue/cue` + `3`) – all the same. Settings → OSC shows the last message received and what it did; anything not understood pops up a warning. `/mix16showcue/...` equivalents also work. With a feedback host set, the app sends `/showcue/standby <number> <name>` when standby changes.
+A number can go in the address (`/showcue/cue/3`), after a space (`/showcue/cue 3`) or as an OSC argument (`/showcue/cue` + `3`) – all the same. **Companion / button controllers:** a `1` sent with a command means *pressed* (it runs) and `0` means *released* (ignored), so Companion buttons can send their on/off value – e.g. `/showcue/cue/3` + `1`. Settings → OSC shows the last message received and what it did; anything not understood pops up a warning. `/mix16showcue/...` equivalents also work. With a feedback host set, the app sends `/showcue/standby <number> <name>` when standby changes.
 
 ### Stream Deck
 
