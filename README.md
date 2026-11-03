@@ -24,6 +24,8 @@ Show playback for theatre and live events, in the spirit of MiX16 GO — for Win
 2. On github.com open the repository → **Actions** tab → **Build Windows installer**. It runs on every push to `main` (or click **Run workflow**).
 3. When it finishes (about 10 minutes), open the run and download **Unique-AV-Show-Cue-Windows** (Setup `.exe`) or **Unique-AV-Show-Cue-Mac** (`.dmg`: `arm64` for Apple Silicon, `x64` for Intel Macs). Released versions are also on the repository's **Releases** page.
 
+**Older Intel Macs on macOS 10.15 Catalina:** use the `x64-catalina` DMG. The normal Mac versions need macOS 11 Big Sur or newer.
+
 Windows SmartScreen may warn because the installer isn't code-signed; choose *More info → Run anyway*.
 
 On a Mac, the app isn't signed with an Apple Developer ID, so the first time macOS may say it "can't be opened" or "is damaged". Fix it once in Terminal:
