@@ -114,6 +114,18 @@ jobs:
             sleep 15
           done
           exit 1
+      - name: Check the Catalina build
+        if: matrix.catalina
+        shell: bash
+        run: |
+          APP="dist/mac/Unique AV Show Cue.app"
+          MIN=$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$APP/Contents/Info.plist")
+          echo "Minimum macOS: $MIN"
+          [ "$MIN" = "10.15" ] || [ "$MIN" = "10.15.0" ] || { echo "::error::Catalina build needs macOS $MIN"; exit 1; }
+          npx --yes @electron/asar extract-file "$APP/Contents/Resources/app.asar" package.json
+          grep -q '"showcueFlavor": "catalina"' package.json || { echo "::error::Catalina flavor missing"; exit 1; }
+          grep -q 'channel: catalina' "$APP/Contents/Resources/app-update.yml" || echo "::warning::app-update.yml has no catalina channel (the app sets it itself)"
+          ls dist
       # Releases already hold the installers, so only keep a copy for builds that
       # don't publish. Running out of artifact storage must not fail the build.
       - uses: actions/upload-artifact@v4
