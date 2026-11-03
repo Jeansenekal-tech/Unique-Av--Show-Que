@@ -10,6 +10,11 @@ const path = require('path');
 // user a new version exists and open the download page.
 const IS_MAC = process.platform === 'darwin';
 
+// The Catalina (macOS 10.15) build runs an older Electron and has its own
+// update channel, so it is only offered Catalina builds.
+let FLAVOR = '';
+try { FLAVOR = require('../package.json').showcueFlavor || ''; } catch (e) {}
+
 function releasesPage() {
   try {
     const y = fs.readFileSync(path.join(process.resourcesPath, 'app-update.yml'), 'utf8');
@@ -39,6 +44,10 @@ function createUpdater(send) {
     autoUpdater.autoDownload = !IS_MAC;
     autoUpdater.autoInstallOnAppQuit = !IS_MAC;
     autoUpdater.allowPrerelease = false;
+    if (FLAVOR === 'catalina') {
+      autoUpdater.channel = 'catalina';
+      autoUpdater.allowDowngrade = false;
+    }
     autoUpdater.logger = null;
 
     autoUpdater.on('checking-for-update', () => emit({ state: 'checking', message: '' }));

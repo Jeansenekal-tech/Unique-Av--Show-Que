@@ -38,7 +38,7 @@ jobs:
             if [ "$DRAFT" = "none" ]; then
               # Create the draft once, so the Windows and Mac builds both upload into it.
               gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
-                --title "Unique AV Show Cue $VERSION" --notes "Windows: download the Setup .exe. Mac: download the arm64 DMG (Apple Silicon) or x64 DMG (Intel)."
+                --title "Unique AV Show Cue $VERSION" --notes "Windows: download the Setup .exe. Mac: download the arm64 DMG (Apple Silicon), the x64 DMG (Intel, macOS 11 or newer) or the x64-catalina DMG (Intel Macs on macOS 10.15 Catalina)."
             fi
           fi
 
@@ -60,6 +60,20 @@ jobs:
               dist/*.dmg
               dist/*.zip
             name: Mac
+          # Separate Intel build for macOS 10.15 Catalina. Electron 33+ needs
+          # macOS 11, so this one uses Electron 32 (the last that supports 10.15).
+          # It has its own update channel (catalina-mac.yml) so Catalina Macs
+          # are only ever told about Catalina builds.
+          - os: macos-15-intel
+            target: >-
+              --mac dmg --x64
+              -c.publish.channel=catalina
+              -c.extraMetadata.showcueFlavor=catalina
+              -c.mac.minimumSystemVersion=10.15
+              -c.mac.artifactName=Unique-AV-Show-Cue-\${version}-x64-catalina.\${ext}
+            files: dist/*.dmg
+            name: Mac-Catalina
+            catalina: true
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
@@ -68,6 +82,14 @@ jobs:
         with:
           node-version: 20
       - run: npm install
+      - name: Use Electron 32 for the Catalina build
+        if: matrix.catalina
+        shell: bash
+        run: |
+          npm install --no-save --no-audit --no-fund electron@32
+          EV=$(node -p "require('electron/package.json').version")
+          echo "Electron $EV"
+          echo "EXTRA_ARGS=-c.electronVersion=$EV" >> "$GITHUB_ENV"
       - name: Stop Spotlight indexing (it holds DMG volumes open)
         if: runner.os == 'macOS'
         run: sudo mdutil -a -i off || true
@@ -79,7 +101,7 @@ jobs:
         run: |
           # macOS sometimes can't detach the DMG volume ("hdiutil detach" fails); try again.
           for attempt in 1 2 3; do
-            npx electron-builder ${{ matrix.target }} \
+            npx electron-builder ${{ matrix.target }} $EXTRA_ARGS \
               --publish ${{ needs.version.outputs.publish }} \
               -c.publish.provider=github \
               -c.publish.owner=${{ github.repository_owner }} \
